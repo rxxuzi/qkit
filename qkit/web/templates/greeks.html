@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}QKIT — Greeks{% endblock %}
+{% block content %}
+<div class="header">
+  <h1>Greeks Lab</h1>
+  <div class="breadcrumb"><span>F4</span> GREEKS</div>
+</div>
+<div class="content">
+<script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+
+<div class="card" style="margin-bottom:8px">
+  <div class="form-row">
+    <div class="fg"><label>Spot ($)</label><input type="number" id="S" value="230" step="1"></div>
+    <div class="fg"><label>Vol (%)</label><input type="number" id="sigma" value="22" step="1"></div>
+    <div class="fg"><label>Greek</label>
+      <select id="greek" style="width:110px">
+        <option value="delta">Delta</option>
+        <option value="gamma">Gamma</option>
+        <option value="vega">Vega</option>
+        <option value="theta">Theta</option>
+        <option value="rho">Rho</option>
+      </select>
+    </div>
+    <div class="fg"><label>Type</label>
+      <select id="type" style="width:90px">
+        <option value="call">Call</option>
+        <option value="put">Put</option>
+      </select>
+    </div>
+    <button onclick="loadHeatmap()">Heatmap</button>
+    <button class="btn-ghost" onclick="loadDashboard()">Full Dashboard</button>
+  </div>
+</div>
+
+<div id="chart" style="overflow:hidden"></div>
+
+<h2>Spot Scan</h2>
+<div class="card" style="margin-bottom:6px">
+  <div class="form-row">
+    <div class="fg"><label>Strike ($)</label><input type="number" id="Ks" value="235" step="1"></div>
+    <div class="fg"><label>Days</label><input type="number" id="Ts" value="30" step="1"></div>
+    <div class="fg"><label>Rate (%)</label><input type="number" id="rs" value="4.3" step="0.1"></div>
+    <button onclick="scan()">Scan</button>
+  </div>
+</div>
+<div id="scan_result"></div>
+
+<script>
+const plotDark = {displayModeBar:true, responsive:true, displaylogo:false};
+
+async function loadHeatmap() {
+  const S = document.getElementById('S').value;
+  const sigma = document.getElementById('sigma').value;
+  const greek = document.getElementById('greek').value;
+  const type = document.getElementById('type').value;
+  const res = await fetch('/api/v1/chart/greeks?S='+S+'&sigma='+sigma+'&greek='+greek+'&type='+type);
+  const data = await res.json();
+  Plotly.newPlot('chart', data.data, data.layout, plotDark);
+}
+
+async function loadDashboard() {
+  const S = document.getElementById('S').value;
+  const sigma = document.getElementById('sigma').value;
+  const type = document.getElementById('type').value;
+  const res = await fetch('/api/v1/chart/greeks_dashboard?S='+S+'&sigma='+sigma+'&type='+type);
+  const data = await res.json();
+  Plotly.newPlot('chart', data.data, data.layout, plotDark);
+}
+
+async function scan() {
+  const base = {K:+document.getElementById('Ks').value, T:+document.getElementById('Ts').value,
+    r:+document.getElementById('rs').value, sigma:+document.getElementById('sigma').value};
+  const S0 = +document.getElementById('S').value;
+  const rows = [];
+  for (let d=-15; d<=15; d++) {
+    const s = S0 + d;
+    const res = await fetch('/api/v1/bsm?S='+s+'&K='+base.K+'&T='+base.T+'&r='+base.r+'&sigma='+base.sigma);
+    const j = await res.json();
+    if (!j.error) rows.push({spot:s, call:j.call, put:j.put, ...j.call_greeks, put_delta:j.put_greeks.delta});
+  }
+  let h = '<div class="panel overflow-x"><table><thead><tr><th>Spot</th><th>Call</th><th>Put</th><th>Delta</th><th>Gamma</th><th>Vega</th><th>Theta</th></tr></thead><tbody>';
+  for (const r of rows) {
+    const atm = Math.abs(r.spot - base.K) < 1 ? ' style="background:var(--bg2)"' : '';
+    const dc = r.delta > 0.5 ? 'green' : r.delta < 0.3 ? 'red' : 'cyan';
+    h += '<tr'+atm+'><td>$'+r.spot+'</td><td class="green">$'+r.call.toFixed(2)+'</td><td class="red">$'+r.put.toFixed(2)+'</td><td class="'+dc+'">'+r.delta.toFixed(4)+'</td><td>'+r.gamma.toFixed(6)+'</td><td>'+r.vega.toFixed(4)+'</td><td class="red">'+r.theta.toFixed(4)+'</td></tr>';
+  }
+  h += '</tbody></table></div>';
+  document.getElementById('scan_result').innerHTML = h;
+}
+
+loadHeatmap();
+</script>
+</div>
+{% endblock %}

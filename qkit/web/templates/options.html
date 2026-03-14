@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol }} Options — qkit{% endblock %}
+{% block content %}
+<div class="header">
+  <div style="display:flex;align-items:center;gap:12px">
+    <div>
+      <h1 id="sym-title">{{ symbol }} <span style="color:var(--fg3);font-weight:400">Options</span></h1>
+      <div id="sym-price" class="breadcrumb">Loading...</div>
+    </div>
+  </div>
+  <div style="display:flex;gap:6px;align-items:center">
+    <a href="/symbol/{{ symbol }}" class="btn-ghost btn-sm" style="text-decoration:none">SYMBOL</a>
+  </div>
+</div>
+<div class="content">
+<script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+
+<!-- ── 1. Summary Cards ──────────────────────────────────── -->
+<h2>Summary</h2>
+<div class="grid g4" id="summary-cards">
+  <div class="card fade-up"><div class="label">Spot</div><div class="value cyan" id="s-spot">—</div></div>
+  <div class="card fade-up"><div class="label">Contracts</div><div class="value" id="s-contracts">—</div></div>
+  <div class="card fade-up"><div class="label">Put/Call Ratio</div><div class="value" id="s-pcr">—</div></div>
+  <div class="card fade-up"><div class="label">Max OI Strike</div><div class="value" id="s-maxoi">—</div></div>
+</div>
+
+<!-- ── 2. Expiry Selector ────────────────────────────────── -->
+<h2>Option Chain</h2>
+<div id="chain-status" class="status-msg wait">Loading option chain...</div>
+<div id="expiry-bar" style="display:none;margin:10px 0;overflow-x:auto;white-space:nowrap"></div>
+
+<!-- ── 3. Chain Table ────────────────────────────────────── -->
+<div class="panel" id="chain-panel" style="display:none;overflow-x:auto">
+  <table>
+    <thead>
+      <tr>
+        <th colspan="6" style="text-align:center;color:var(--green);border-right:1px solid var(--border)">CALLS</th>
+        <th style="text-align:center">Strike</th>
+        <th colspan="6" style="text-align:center;color:var(--red);border-left:1px solid var(--border)">PUTS</th>
+      </tr>
+      <tr>
+        <th>IV</th><th>Bid</th><th>Ask</th><th>Last</th><th>Vol</th><th style="border-right:1px solid var(--border)">OI</th>
+        <th style="text-align:center">$</th>
+        <th style="border-left:1px solid var(--border)">IV</th><th>Bid</th><th>Ask</th><th>Last</th><th>Vol</th><th>OI</th>
+      </tr>
+    </thead>
+    <tbody id="chain-tbody"></tbody>
+  </table>
+</div>
+
+<!-- ── 4. IV Surface + Smile ─────────────────────────────── -->
+<h2>Implied Volatility</h2>
+<div id="iv-status" class="status-msg wait">Loading IV surface...</div>
+<div class="grid g2" style="margin-top:8px">
+  <div id="iv-surface" style="overflow:hidden"></div>
+  <div id="iv-smile" style="overflow:hidden"></div>
+</div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SYM = '{{ symbol }}';
+const plotDark = {displayModeBar: true, responsive: true, displaylogo: false};
+
+const status = (id, msg, ok) => {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = 'status-msg' + (ok === true ? ' ok' : ok === false ? ' err' : ' wait');
+};
+
+let chainData = null;
+let spot = 0;
+
+async function loadChain() {
+  status('chain-status', 'Fetching option chain for ' + SYM + '...', null);
+  try {
+    const res = await fetch('/api/v1/options/' + SYM + '/chain');
+    const data = await res.json();
+    if (data.error) { status('chain-status', 'Error: ' + data.error, false); return; }
+
+    chainData = data;
+    spot = data.spot;
+
+    // Header
+    document.getElementById('sym-price').textContent = 'Spot: $' + spot.toFixed(2);
+
+    // Summary cards
+    document.getElementById('s-spot').textContent = '$' + spot.toFixed(2);
+    document.getElementById('s-contracts').textContent = data.total_contracts;
+    document.getElementById('s-pcr').textContent = data.put_call_ratio.toFixed(2);
+    document.getElementById('s-maxoi').textContent = '$' + data.max_oi_strike;
+
+    // Expiry tabs
+    const bar = document.getElementById('expiry-bar');
+    bar.style.display = 'block';
+    bar.innerHTML = data.expiries.map((exp, i) =>
+      '<button class="btn-ghost btn-sm' + (i === 0 ? ' active-exp' : '') + '" ' +
+      'onclick="selectExpiry(\'' + exp + '\', this)" style="margin-right:4px">' + exp + '</button>'
+    ).join('');
+
+    // Show first expiry
+    if (data.expiries.length > 0) renderChain(data.expiries[0]);
+    status('chain-status', data.total_contracts + ' contracts, ' + data.expiries.length + ' expiries', true);
+  } catch(e) {
+    status('chain-status', 'Error: ' + e.message, false);
+  }
+}
+
+function selectExpiry(expiry, btn) {
+  document.querySelectorAll('#expiry-bar button').forEach(b => b.classList.remove('active-exp'));
+  btn.classList.add('active-exp');
+  renderChain(expiry);
+}
+
+function renderChain(expiry) {
+  if (!chainData) return;
+  const panel = document.getElementById('chain-panel');
+  const tbody = document.getElementById('chain-tbody');
+  panel.style.display = 'block';
+
+  const contracts = chainData.chain.filter(c => c.expiry === expiry);
+  const strikes = [...new Set(contracts.map(c => c.strike))].sort((a, b) => a - b);
+
+  const callMap = {};
+  const putMap = {};
+  contracts.forEach(c => {
+    if (c.type === 'call') callMap[c.strike] = c;
+    else putMap[c.strike] = c;
+  });
+
+  tbody.innerHTML = strikes.map(k => {
+    const c = callMap[k] || {};
+    const p = putMap[k] || {};
+    const itm = k < spot;
+    const itmC = itm ? 'background:rgba(0,204,102,.04)' : '';
+    const itmP = k > spot ? 'background:rgba(255,51,51,.04)' : '';
+
+    const fmtIV = (v) => v != null ? (v * 100).toFixed(1) + '%' : '—';
+    const fmtN = (v) => v != null ? v.toFixed(2) : '—';
+    const fmtI = (v) => v != null ? Number(v).toLocaleString() : '—';
+
+    return '<tr class="fade-up">' +
+      '<td class="num" style="' + itmC + '">' + fmtIV(c.iv) + '</td>' +
+      '<td class="num" style="' + itmC + '">' + fmtN(c.bid) + '</td>' +
+      '<td class="num" style="' + itmC + '">' + fmtN(c.ask) + '</td>' +
+      '<td class="num" style="' + itmC + '">' + fmtN(c.last) + '</td>' +
+      '<td class="num" style="' + itmC + '">' + fmtI(c.volume) + '</td>' +
+      '<td class="num" style="border-right:1px solid var(--border);' + itmC + '">' + fmtI(c.oi) + '</td>' +
+      '<td class="num" style="text-align:center;font-weight:700;color:' + (k === spot ? 'var(--cyan)' : 'var(--white)') + '">' + k.toFixed(1) + '</td>' +
+      '<td class="num" style="border-left:1px solid var(--border);' + itmP + '">' + fmtIV(p.iv) + '</td>' +
+      '<td class="num" style="' + itmP + '">' + fmtN(p.bid) + '</td>' +
+      '<td class="num" style="' + itmP + '">' + fmtN(p.ask) + '</td>' +
+      '<td class="num" style="' + itmP + '">' + fmtN(p.last) + '</td>' +
+      '<td class="num" style="' + itmP + '">' + fmtI(p.volume) + '</td>' +
+      '<td class="num" style="' + itmP + '">' + fmtI(p.oi) + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
+async function loadIV() {
+  status('iv-status', 'Computing IV surface for ' + SYM + '...', null);
+  try {
+    const res = await fetch('/api/v1/chart/iv_surface?symbol=' + SYM);
+    const data = await res.json();
+    if (data.error) { status('iv-status', 'Error: ' + data.error, false); return; }
+    if (data.surface) Plotly.newPlot('iv-surface', data.surface.data, data.surface.layout, plotDark);
+    if (data.smile) Plotly.newPlot('iv-smile', data.smile.data, data.smile.layout, plotDark);
+    status('iv-status', data.n_contracts + ' contracts loaded', true);
+  } catch(e) { status('iv-status', 'Error: ' + e.message, false); }
+}
+
+// Active expiry button style
+const style = document.createElement('style');
+style.textContent = '.active-exp { background: var(--cyan) !important; color: var(--bg) !important; border-color: var(--cyan) !important; }';
+document.head.appendChild(style);
+
+loadChain();
+loadIV();
+</script>
+{% endblock %}

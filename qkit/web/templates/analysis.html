@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}QKIT — Analysis{% endblock %}
+{% block content %}
+<div class="header">
+  <h1>Analysis</h1>
+  <div class="breadcrumb"><span>F5</span> ANALYSIS</div>
+</div>
+<div class="content">
+<script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+
+<div class="card" style="margin-bottom:8px">
+  <div class="form-row">
+    <div class="fg"><label>Symbol</label><input type="text" id="sym" value="SPY" style="width:90px;text-transform:uppercase"></div>
+    <div class="fg"><label>Spot (override)</label><input type="number" id="spot_override" value="" placeholder="auto" style="width:110px"></div>
+    <div class="fg"><label>Vol (%)</label><input type="number" id="vol" value="22" step="1" style="width:80px"></div>
+    <button onclick="runAll()">Run Analysis</button>
+    <button class="btn-ghost" onclick="runGreeks()">Greeks Only</button>
+  </div>
+</div>
+
+<h2>Option Payoff</h2>
+<div class="card" style="margin-bottom:6px">
+  <div class="form-row">
+    <div class="fg"><label>Spot</label><input type="number" id="po_S" value="100" step="1" style="width:80px"></div>
+    <div class="fg"><label>Strike</label><input type="number" id="po_K" value="105" step="1" style="width:80px"></div>
+    <div class="fg"><label>Premium</label><input type="number" id="po_prem" value="3" step="0.1" style="width:80px"></div>
+    <div class="fg"><label>Type</label>
+      <select id="po_type" style="width:70px"><option value="call">Call</option><option value="put">Put</option></select></div>
+    <div class="fg"><label>Position</label>
+      <select id="po_pos" style="width:70px"><option value="long">Long</option><option value="short">Short</option></select></div>
+    <button onclick="runPayoff()">Draw</button>
+    <button class="btn-ghost" onclick="runStrategy()">Strategy</button>
+  </div>
+</div>
+<div id="payoff_status" class="status-msg">Click Draw for single leg or Strategy for presets</div>
+<div id="payoff_chart" style="overflow:hidden"></div>
+<div id="payoff_info" class="grid g4" style="margin-top:6px"></div>
+
+<div id="strategy_presets" style="margin-top:8px;display:none">
+  <div class="form-row" style="gap:4px;flex-wrap:wrap">
+    <button class="btn-ghost btn-sm" onclick="loadStrategy('bull_spread')">Bull Call Spread</button>
+    <button class="btn-ghost btn-sm" onclick="loadStrategy('bear_spread')">Bear Put Spread</button>
+    <button class="btn-ghost btn-sm" onclick="loadStrategy('straddle')">Long Straddle</button>
+    <button class="btn-ghost btn-sm" onclick="loadStrategy('strangle')">Long Strangle</button>
+    <button class="btn-ghost btn-sm" onclick="loadStrategy('iron_condor')">Iron Condor</button>
+    <button class="btn-ghost btn-sm" onclick="loadStrategy('butterfly')">Butterfly</button>
+  </div>
+</div>
+
+<h2>Greeks Dashboard</h2>
+<div id="greeks_status" class="status-msg">Click "Run Analysis" or "Greeks Only" to generate</div>
+<div id="greeks_chart" style="overflow:hidden"></div>
+
+<h2>GARCH Conditional Volatility</h2>
+<div id="garch_status" class="status-msg">Waiting...</div>
+<div id="garch_chart" style="overflow:hidden"></div>
+<div id="garch_info" class="grid g4" style="margin-top:6px"></div>
+
+<h2>VRP Signal (Bollerslev et al. 2009)</h2>
+<div id="vrp_status" class="status-msg">Waiting...</div>
+<div id="vrp_chart" style="overflow:hidden"></div>
+<div id="vrp_current" style="margin-top:6px"></div>
+
+<h2>IV Surface</h2>
+<div id="iv_status" class="status-msg">Waiting...</div>
+<div id="iv_surface" style="overflow:hidden"></div>
+<h2>IV Smile</h2>
+<div id="iv_smile" style="overflow:hidden"></div>
+
+<script>
+const status = (id, msg, ok) => {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = 'status-msg' + (ok === true ? ' ok' : ok === false ? ' err' : ' wait');
+};
+
+const plotDark = {displayModeBar:true, responsive:true, displaylogo:false,
+  modeBarButtonsToRemove:['lasso2d','select2d']};
+
+async function runGreeks() {
+  const S = document.getElementById('spot_override').value || 230;
+  const sigma = document.getElementById('vol').value;
+  status('greeks_status', 'Computing Greeks...', null);
+  try {
+    const res = await fetch('/api/v1/chart/greeks_dashboard?S='+S+'&sigma='+sigma+'&type=call');
+    const data = await res.json();
+    Plotly.newPlot('greeks_chart', data.data, data.layout, plotDark);
+    status('greeks_status', 'Greeks dashboard ready', true);
+  } catch(e) { status('greeks_status', 'Error: '+e.message, false); }
+}
+
+async function runGARCH() {
+  const sym = document.getElementById('sym').value.toUpperCase();
+  status('garch_status', 'Fitting GARCH(1,1) on '+sym+' 5y data...', null);
+  try {
+    const res = await fetch('/api/v1/chart/garch?symbol='+sym);
+    const data = await res.json();
+    if (data.error) { status('garch_status', 'Error: '+data.error, false); return; }
+    Plotly.newPlot('garch_chart', data.chart.data, data.chart.layout, plotDark);
+    const info = data.info;
+    document.getElementById('garch_info').innerHTML =
+      '<div class="card fade-up"><div class="label">Persistence</div><div class="value cyan">'+info.persistence+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Half-life (days)</div><div class="value">'+info.half_life+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Unconditional Vol</div><div class="value">'+info.unconditional_vol+'%</div></div>'+
+      '<div class="card fade-up"><div class="label">30d Forecast Vol</div><div class="value amber">'+info.forecast_30d_vol+'%</div></div>';
+    status('garch_status', 'GARCH(1,1) fitted on '+sym, true);
+  } catch(e) { status('garch_status', 'Error: '+e.message, false); }
+}
+
+async function runVRP() {
+  status('vrp_status', 'Computing VRP (IV^2 - RV)...', null);
+  try {
+    const res = await fetch('/api/v1/chart/vrp');
+    const data = await res.json();
+    if (data.error) { status('vrp_status', 'Error: '+data.error, false); return; }
+    Plotly.newPlot('vrp_chart', data.chart.data, data.chart.layout, plotDark);
+    const c = data.current;
+    const tagClass = c.signal.includes('HIGH') ? 'red' : c.signal.includes('LOW') ? 'green' : 'cyan';
+    document.getElementById('vrp_current').innerHTML =
+      '<div class="grid g4">'+
+        '<div class="card fade-up"><div class="label">VRP</div><div class="value">'+(c.vrp*10000).toFixed(2)+'<span style="font-size:10px;color:var(--fg3)"> bps</span></div></div>'+
+        '<div class="card fade-up"><div class="label">z-score</div><div class="value '+tagClass+'">'+c.z_score.toFixed(2)+'</div></div>'+
+        '<div class="card fade-up"><div class="label">Signal</div><div style="margin-top:6px"><span class="tag '+tagClass+'">'+c.signal.split(':')[0]+'</span></div></div>'+
+        '<div class="card fade-up"><div class="label">IV^2 (daily)</div><div class="value">'+(c.iv_sq*10000).toFixed(2)+'<span style="font-size:10px;color:var(--fg3)"> bps</span></div></div>'+
+      '</div>';
+    status('vrp_status', 'VRP signal ready', true);
+  } catch(e) { status('vrp_status', 'Error: '+e.message, false); }
+}
+
+async function runIV() {
+  const sym = document.getElementById('sym').value.toUpperCase();
+  status('iv_status', 'Fetching '+sym+' option chain & computing IV...', null);
+  try {
+    const res = await fetch('/api/v1/chart/iv_surface?symbol='+sym);
+    const data = await res.json();
+    if (data.error) { status('iv_status', 'Error: '+data.error, false); return; }
+    Plotly.newPlot('iv_surface', data.surface.data, data.surface.layout, plotDark);
+    Plotly.newPlot('iv_smile', data.smile.data, data.smile.layout, plotDark);
+    status('iv_status', 'IV surface: '+data.n_contracts+' contracts, spot=$'+data.spot.toFixed(2), true);
+  } catch(e) { status('iv_status', 'Error: '+e.message, false); }
+}
+
+async function runPayoff() {
+  const S = document.getElementById('po_S').value;
+  const K = document.getElementById('po_K').value;
+  const prem = document.getElementById('po_prem').value;
+  const t = document.getElementById('po_type').value;
+  const pos = document.getElementById('po_pos').value;
+  status('payoff_status', 'Drawing payoff...', null);
+  document.getElementById('strategy_presets').style.display = 'none';
+  try {
+    const res = await fetch('/api/v1/chart/payoff?S='+S+'&K='+K+'&premium='+prem+'&type='+t+'&position='+pos);
+    const data = await res.json();
+    if (data.error) { status('payoff_status', 'Error: '+data.error, false); return; }
+    Plotly.newPlot('payoff_chart', data.data, data.layout, plotDark);
+    document.getElementById('payoff_info').innerHTML = '';
+    status('payoff_status', pos+' '+t+' payoff ready', true);
+  } catch(e) { status('payoff_status', 'Error: '+e.message, false); }
+}
+
+function loadStrategy(name) {
+  const S = parseFloat(document.getElementById('po_S').value) || 100;
+  const strategies = {
+    bull_spread: [
+      {K: S*0.98, premium: 5, type:'call', position:'long', qty:1},
+      {K: S*1.05, premium: 2, type:'call', position:'short', qty:1},
+    ],
+    bear_spread: [
+      {K: S*1.05, premium: 5, type:'put', position:'long', qty:1},
+      {K: S*0.95, premium: 2, type:'put', position:'short', qty:1},
+    ],
+    straddle: [
+      {K: S, premium: 4, type:'call', position:'long', qty:1},
+      {K: S, premium: 4, type:'put', position:'long', qty:1},
+    ],
+    strangle: [
+      {K: S*1.05, premium: 2.5, type:'call', position:'long', qty:1},
+      {K: S*0.95, premium: 2.5, type:'put', position:'long', qty:1},
+    ],
+    iron_condor: [
+      {K: S*0.90, premium: 0.5, type:'put', position:'long', qty:1},
+      {K: S*0.95, premium: 2, type:'put', position:'short', qty:1},
+      {K: S*1.05, premium: 2, type:'call', position:'short', qty:1},
+      {K: S*1.10, premium: 0.5, type:'call', position:'long', qty:1},
+    ],
+    butterfly: [
+      {K: S*0.95, premium: 6, type:'call', position:'long', qty:1},
+      {K: S, premium: 4, type:'call', position:'short', qty:2},
+      {K: S*1.05, premium: 2, type:'call', position:'long', qty:1},
+    ],
+  };
+  const legs = strategies[name];
+  if (!legs) return;
+  legs.forEach(l => l.K = Math.round(l.K));
+  drawStrategy(S, legs, name.replace('_',' '));
+}
+
+async function drawStrategy(S, legs, label) {
+  status('payoff_status', 'Drawing '+label+'...', null);
+  try {
+    const res = await fetch('/api/v1/chart/payoff_strategy', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({S, legs}),
+    });
+    const data = await res.json();
+    if (data.error) { status('payoff_status', 'Error: '+data.error, false); return; }
+    Plotly.newPlot('payoff_chart', data.chart.data, data.chart.layout, plotDark);
+    const info = data.info;
+    let beStr = info.breakevens.length > 0 ? info.breakevens.map(b => '$'+b).join(', ') : 'N/A';
+    document.getElementById('payoff_info').innerHTML =
+      '<div class="card fade-up"><div class="label">Max Profit</div><div class="value green">$'+info.max_profit+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Max Loss</div><div class="value red">$'+info.max_loss+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Break-even</div><div class="value cyan" style="font-size:14px">'+beStr+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Legs</div><div class="value">'+legs.length+'</div></div>';
+    status('payoff_status', label+' payoff ready', true);
+  } catch(e) { status('payoff_status', 'Error: '+e.message, false); }
+}
+
+async function runStrategy() {
+  document.getElementById('strategy_presets').style.display = 'block';
+  status('payoff_status', 'Select a strategy preset above', null);
+}
+
+async function runAll() {
+  await runPayoff();
+  await runGreeks();
+  await Promise.all([runGARCH(), runVRP(), runIV()]);
+}
+</script>
+</div>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}QKIT — Output{% endblock %}
+{% block content %}
+<div class="header">
+  <h1>Output</h1>
+  <div class="breadcrumb"><span>F9</span> OUTPUT</div>
+</div>
+<div class="content">
+
+{% if reports %}
+<h2>Reports</h2>
+<div class="grid g3">
+  {% for r in reports %}
+  <div class="card fade-up">
+    <div class="label">{{ r }}</div>
+    <a href="/static/reports/{{ r }}" target="_blank" class="btn btn-sm" style="margin-top:6px">OPEN</a>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel">
+  <div class="panel-body empty">
+    <p>No reports generated yet.</p>
+    <p style="margin-top:4px"><code style="color:var(--cyan);background:var(--bg2);padding:2px 8px">qkit report AAPL</code></p>
+  </div>
+</div>
+{% endif %}
+
+</div>
+{% endblock %}

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}QKIT — Signals{% endblock %}
+{% block content %}
+<div class="header">
+  <h1>Signals</h1>
+  <div class="breadcrumb"><span>F8</span> SIGNALS</div>
+</div>
+<div class="content">
+
+<h2>Variance Risk Premium</h2>
+<div class="panel">
+  <div class="panel-body">
+    <p style="color:var(--fg2);font-size:11px;line-height:1.6;margin-bottom:8px">
+      VRP = IV&sup2; &minus; RV. The market's compensation for bearing variance risk.
+      When high, options are overpriced; when low/negative, risk is underpriced.
+    </p>
+    <table>
+      <thead><tr><th>Signal</th><th>Condition</th><th>Action</th><th>Strategy</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag red">HIGH VRP</span></td><td>z &gt; 1.5</td><td>Short vol</td><td>Iron condor, straddle sell</td></tr>
+        <tr><td><span class="tag green">LOW VRP</span></td><td>z &lt; &minus;1.0</td><td>Buy protection</td><td>OTM puts, VIX calls</td></tr>
+        <tr><td><span class="tag cyan">NEUTRAL</span></td><td>&minus;1.0 &le; z &le; 1.5</td><td>No action</td><td>&mdash;</td></tr>
+      </tbody>
+    </table>
+    <div style="margin-top:8px"><code style="color:var(--cyan);background:var(--bg2);padding:2px 8px;font-size:11px">from qkit.signals import compute_vrp</code></div>
+  </div>
+</div>
+
+<h2>Pairs Trading</h2>
+<div class="panel">
+  <div class="panel-body">
+    <p style="color:var(--fg2);font-size:11px;line-height:1.6;margin-bottom:8px">
+      Cointegrated pairs exhibit mean-reverting spreads modelled as Ornstein-Uhlenbeck processes.
+      The spread z-score drives entry, exit and stop-loss signals.
+    </p>
+    <table>
+      <thead><tr><th>Signal</th><th>Condition</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag green">LONG SPREAD</span></td><td>z &lt; &minus;2.0</td><td>Buy B, short A (spread too low)</td></tr>
+        <tr><td><span class="tag red">SHORT SPREAD</span></td><td>z &gt; 2.0</td><td>Short B, buy A (spread too high)</td></tr>
+        <tr><td><span class="tag cyan">EXIT</span></td><td>|z| &lt; 0.5</td><td>Close position (mean reverted)</td></tr>
+        <tr><td><span class="tag amber">STOP</span></td><td>|z| &gt; 4.0</td><td>Cut losses (breakdown)</td></tr>
+      </tbody>
+    </table>
+    <div style="margin-top:8px"><code style="color:var(--cyan);background:var(--bg2);padding:2px 8px;font-size:11px">from qkit.signals import find_cointegrated_pairs</code></div>
+  </div>
+</div>
+
+<h2>Regime Detection (HMM)</h2>
+<div class="panel">
+  <div class="panel-body">
+    <p style="color:var(--fg2);font-size:11px;line-height:1.6;margin-bottom:8px">
+      Hidden Markov Model with 2 states detects bull/low-vol vs bear/high-vol regimes.
+      Strategy parameters should adapt based on the current regime probability.
+    </p>
+    <table>
+      <thead><tr><th>Regime</th><th>mu</th><th>sigma</th><th>Strategy</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag green">Bull / Low Vol</span></td><td class="green">Positive</td><td>Low</td><td>Short vol, pairs active</td></tr>
+        <tr><td><span class="tag red">Bear / High Vol</span></td><td class="red">Negative</td><td>High</td><td>Long vol, reduce exposure</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h2>Economic Calendar</h2>
+<div class="tv-wrap" style="height:380px">
+<div class="tradingview-widget-container">
+  <div class="tradingview-widget-container__widget"></div>
+  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>
+  {"colorTheme":"dark","isTransparent":true,"width":"100%","height":"100%","locale":"en","importanceFilter":"-1,0,1"}
+  </script>
+</div>
+</div>
+
+</div>
+{% endblock %}

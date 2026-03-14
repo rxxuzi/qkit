@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol }} — Market{% endblock %}
+{% block content %}
+<div class="header">
+  <h1>{{ symbol }}</h1>
+  <div style="display:flex;gap:6px">
+    {% for s in ["SPY","QQQ","AAPL","NVDA","MSFT","TSLA","VIX"] %}
+    <a href="/market/{{ s }}" class="{% if s == symbol %}btn{% else %}btn-ghost{% endif %} btn-sm" style="text-decoration:none">{{ s }}</a>
+    {% endfor %}
+  </div>
+</div>
+<div class="content">
+<script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+
+<!-- qkit: BSM Quick Pricer (primary) -->
+<h2>BSM Pricing</h2>
+<div class="card">
+  <div class="form-row">
+    <div class="fg"><label>Strike ($)</label><input type="number" id="K" value="0" step="1"></div>
+    <div class="fg"><label>Days</label><input type="number" id="T" value="30" step="1"></div>
+    <div class="fg"><label>Vol (%)</label><input type="number" id="sigma" value="22" step="1"></div>
+    <button onclick="quickPrice()">Price</button>
+  </div>
+  <div id="qresult" style="margin-top:10px"></div>
+</div>
+
+<!-- qkit: Greeks scan -->
+<h2>Greeks Dashboard</h2>
+<div id="greeks_status" class="status-msg wait">Enter strike above and click Price, or load full dashboard below</div>
+<div class="card" style="margin-top:8px">
+  <div class="form-row">
+    <div class="fg"><label>Spot ($)</label><input type="number" id="gs" value="230" step="1"></div>
+    <div class="fg"><label>Vol (%)</label><input type="number" id="gv" value="22" step="1"></div>
+    <div class="fg"><label>Type</label>
+      <select id="gt" style="width:90px"><option value="call">Call</option><option value="put">Put</option></select></div>
+    <button onclick="loadGreeks()">Load Greeks</button>
+  </div>
+</div>
+<div id="greeks_chart" style="overflow:hidden;margin-top:8px"></div>
+
+<!-- qkit: GARCH -->
+<h2>GARCH Volatility</h2>
+<div id="garch_status" class="status-msg wait">Click to load</div>
+<div style="margin-top:8px"><button class="btn-ghost" onclick="loadGarch()">Fit GARCH(1,1) on {{ symbol }}</button></div>
+<div id="garch_chart" style="overflow:hidden;margin-top:8px"></div>
+<div id="garch_info" class="grid g4" style="margin-top:8px"></div>
+
+<!-- TradingView chart (supplementary) -->
+<h2>Chart (TradingView)</h2>
+<div class="tv-wrap" style="height:400px">
+<div class="tradingview-widget-container" style="height:100%;width:100%">
+  <div id="tv_chart" style="height:100%;width:100%"></div>
+  <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+  <script type="text/javascript">
+  new TradingView.widget({
+    "autosize": true,
+    "symbol": "{{ symbol }}",
+    "interval": "D",
+    "timezone": "America/New_York",
+    "theme": "dark",
+    "style": "1",
+    "locale": "en",
+    "backgroundColor": "rgba(0, 0, 0, 1)",
+    "gridColor": "rgba(255, 255, 255, 0.03)",
+    "hide_side_toolbar": false,
+    "allow_symbol_change": true,
+    "studies": ["MASimple@tv-basicstudies", "RSI@tv-basicstudies"],
+    "container_id": "tv_chart"
+  });
+  </script>
+</div>
+</div>
+
+<!-- TradingView supplementary widgets -->
+<div class="grid g2" style="margin-top:12px">
+  <div>
+    <h2>Technical Analysis</h2>
+    <div class="tv-wrap" style="height:340px">
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-technical-analysis.js" async>
+      {"interval":"1D","width":"100%","isTransparent":true,"height":"100%","symbol":"{{ symbol }}","showIntervalTabs":true,"displayMode":"single","locale":"en","colorTheme":"dark"}
+      </script>
+    </div>
+    </div>
+  </div>
+  <div>
+    <h2>Financials</h2>
+    <div class="tv-wrap" style="height:340px">
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-financials.js" async>
+      {"isTransparent":true,"largeChartUrl":"","displayMode":"regular","width":"100%","height":"100%","colorTheme":"dark","symbol":"{{ symbol }}","locale":"en"}
+      </script>
+    </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const plotDark = {displayModeBar:true, responsive:true, displaylogo:false};
+
+const status = (id, msg, ok) => {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = 'status-msg' + (ok === true ? ' ok' : ok === false ? ' err' : ' wait');
+};
+
+async function quickPrice() {
+  const K = document.getElementById('K').value || 0;
+  const T = document.getElementById('T').value;
+  const sigma = document.getElementById('sigma').value;
+  const res = await fetch('/api/v1/bsm?S='+K+'&K='+K+'&T='+T+'&r=4.3&sigma='+sigma);
+  const d = await res.json();
+  if (d.error) { document.getElementById('qresult').innerHTML='<span class="red">'+d.error+'</span>'; return; }
+  const cg = d.call_greeks;
+  document.getElementById('qresult').innerHTML =
+    '<div class="grid g4" style="margin-top:8px">'+
+      '<div class="card fade-up"><div class="label">Call</div><div class="value green">$'+d.call+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Put</div><div class="value red">$'+d.put+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Delta</div><div class="value">'+cg.delta.toFixed(4)+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Gamma</div><div class="value">'+cg.gamma.toFixed(4)+'</div></div>'+
+    '</div>'+
+    '<div class="grid g4" style="margin-top:6px">'+
+      '<div class="card fade-up"><div class="label">Vega</div><div class="value">'+cg.vega.toFixed(4)+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Theta</div><div class="value red">'+cg.theta.toFixed(4)+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Rho</div><div class="value">'+cg.rho.toFixed(4)+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Parity</div><div class="value"><span class="tag '+(d.parity.passed?'green':'red')+'">'+(d.parity.passed?'PASS':'FAIL')+'</span></div></div>'+
+    '</div>';
+}
+
+async function loadGreeks() {
+  const S = document.getElementById('gs').value;
+  const sigma = document.getElementById('gv').value;
+  const type = document.getElementById('gt').value;
+  status('greeks_status', 'Computing Greeks dashboard...', null);
+  try {
+    const res = await fetch('/api/v1/chart/greeks_dashboard?S='+S+'&sigma='+sigma+'&type='+type);
+    const data = await res.json();
+    Plotly.newPlot('greeks_chart', data.data, data.layout, plotDark);
+    status('greeks_status', 'Greeks dashboard ready', true);
+  } catch(e) { status('greeks_status', 'Error: '+e.message, false); }
+}
+
+async function loadGarch() {
+  status('garch_status', 'Fitting GARCH(1,1) on {{ symbol }} 5y data...', null);
+  try {
+    const res = await fetch('/api/v1/chart/garch?symbol={{ symbol }}');
+    const data = await res.json();
+    if (data.error) { status('garch_status', 'Error: '+data.error, false); return; }
+    Plotly.newPlot('garch_chart', data.chart.data, data.chart.layout, plotDark);
+    const info = data.info;
+    document.getElementById('garch_info').innerHTML =
+      '<div class="card fade-up"><div class="label">Persistence</div><div class="value cyan">'+info.persistence+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Half-life</div><div class="value">'+info.half_life+'<span style="font-size:12px;color:var(--fg3)"> days</span></div></div>'+
+      '<div class="card fade-up"><div class="label">Unconditional Vol</div><div class="value">'+info.unconditional_vol+'%</div></div>'+
+      '<div class="card fade-up"><div class="label">30d Forecast</div><div class="value amber">'+info.forecast_30d_vol+'%</div></div>';
+    status('garch_status', 'GARCH(1,1) fitted on {{ symbol }}', true);
+  } catch(e) { status('garch_status', 'Error: '+e.message, false); }
+}
+</script>
+
+</div>
+{% endblock %}

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qkit"
+version = "0.1.0"
+description = "Quantitative finance toolkit for options analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    "moomoo-api>=2.5.0",
+    "yfinance>=0.2.36",
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "scipy>=1.12.0",
+    "QuantLib>=1.33",
+    "mibian>=0.1.2",
+    "py_vollib>=1.0.1",
+    "arch>=7.0.0",
+    "statsmodels>=0.14.0",
+    "plotly>=5.18.0",
+    "matplotlib>=3.8.0",
+    "seaborn>=0.13.0",
+    "kaleido>=0.2.1",
+    "jinja2>=3.1.0",
+    "tabulate>=0.9.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.7.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=4.0"]
+ml = ["torch>=2.0"]
+
+[project.scripts]
+qkit = "qkit.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["qkit*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+norecursedirs = ["qkit"]

@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}QKIT — Pairs{% endblock %}
+{% block content %}
+<div class="header">
+  <h1>Pairs Trading</h1>
+  <div class="breadcrumb"><span>F6</span> PAIRS</div>
+</div>
+<div class="content">
+<script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+
+<div class="card" style="margin-bottom:8px">
+  <div class="form-row">
+    <div class="fg"><label>Asset A</label><input type="text" id="sym_a" value="KO" style="width:80px;text-transform:uppercase"></div>
+    <div class="fg"><label>Asset B</label><input type="text" id="sym_b" value="PEP" style="width:80px;text-transform:uppercase"></div>
+    <div class="fg"><label>Period</label>
+      <select id="period" style="width:90px">
+        <option value="1y">1 Year</option>
+        <option value="2y" selected>2 Years</option>
+        <option value="3y">3 Years</option>
+        <option value="5y">5 Years</option>
+      </select>
+    </div>
+    <button onclick="runAnalyze()">Analyze</button>
+    <button class="btn-ghost" onclick="runBacktest()">Backtest</button>
+    <button class="btn-ghost" onclick="runScreen()">Screen</button>
+  </div>
+</div>
+
+<h2>Pair Analysis</h2>
+<div id="pair_status" class="status-msg">Select two assets and click Analyze</div>
+<div id="pair_chart" style="overflow:hidden"></div>
+<div id="pair_stats" style="margin-top:6px"></div>
+<div id="bt_summary" style="margin-top:6px"></div>
+
+<h2>Sector Pair Screening</h2>
+<div id="screen_status" class="status-msg">Click Screen to scan all sector pairs</div>
+<div id="screen_table" style="margin-top:6px"></div>
+
+<script>
+const status = (id, msg, ok) => {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = 'status-msg' + (ok === true ? ' ok' : ok === false ? ' err' : ' wait');
+};
+
+const plotDark = {displayModeBar:true, responsive:true, displaylogo:false,
+  modeBarButtonsToRemove:['lasso2d','select2d']};
+
+function tagFor(signal) {
+  if (signal.includes('SHORT')) return 'red';
+  if (signal.includes('LONG')) return 'green';
+  if (signal === 'EXIT') return 'amber';
+  return 'cyan';
+}
+
+function renderStats(stats) {
+  const tc = tagFor(stats.signal);
+  const cointTag = stats.is_cointegrated
+    ? '<span class="tag green">Cointegrated</span>'
+    : '<span class="tag red">Not Cointegrated</span>';
+  document.getElementById('pair_stats').innerHTML =
+    '<div class="grid g4">'+
+      '<div class="card fade-up"><div class="label">p-value</div><div class="value '+(stats.pvalue < 0.05 ? 'green' : 'red')+'">'+stats.pvalue+'</div>'+cointTag+'</div>'+
+      '<div class="card fade-up"><div class="label">Half-life</div><div class="value cyan">'+stats.half_life+'<span style="font-size:10px;color:var(--fg3)"> days</span></div></div>'+
+      '<div class="card fade-up"><div class="label">z-score</div><div class="value">'+stats.current_z+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Signal</div><div style="margin-top:6px"><span class="tag '+tc+'">'+stats.signal+'</span></div></div>'+
+      '<div class="card fade-up"><div class="label">Beta (hedge)</div><div class="value">'+stats.beta+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Theta (OU)</div><div class="value">'+stats.theta+'</div></div>'+
+    '</div>';
+}
+
+function renderBacktest(summary) {
+  if (!summary) { document.getElementById('bt_summary').innerHTML = ''; return; }
+  document.getElementById('bt_summary').innerHTML =
+    '<h2>Walk-Forward Backtest</h2>'+
+    '<div class="grid g4">'+
+      '<div class="card fade-up"><div class="label">Folds</div><div class="value cyan">'+summary.n_folds+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Avg Sharpe</div><div class="value '+(summary.avg_sharpe > 0 ? 'green' : 'red')+'">'+summary.avg_sharpe.toFixed(2)+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Worst Drawdown</div><div class="value red">'+summary.worst_drawdown.toFixed(4)+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Total Trades</div><div class="value">'+summary.total_trades+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Avg Win Rate</div><div class="value">'+(summary.avg_win_rate * 100).toFixed(1)+'%</div></div>'+
+      '<div class="card fade-up"><div class="label">Net PnL</div><div class="value '+(summary.total_net_pnl >= 0 ? 'green' : 'red')+'">'+summary.total_net_pnl.toFixed(4)+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Coint. Folds</div><div class="value">'+summary.cointegrated_folds+'/'+summary.n_folds+'</div></div>'+
+      '<div class="card fade-up"><div class="label">Avg Return (ann.)</div><div class="value">'+(summary.avg_annual_return * 100).toFixed(2)+'%</div></div>'+
+    '</div>';
+}
+
+async function runAnalyze() {
+  const a = document.getElementById('sym_a').value.toUpperCase();
+  const b = document.getElementById('sym_b').value.toUpperCase();
+  const p = document.getElementById('period').value;
+  status('pair_status', 'Analyzing '+a+' / '+b+'...', null);
+  document.getElementById('bt_summary').innerHTML = '';
+  try {
+    const res = await fetch('/api/v1/chart/pairs?a='+a+'&b='+b+'&period='+p);
+    const data = await res.json();
+    if (data.error) { status('pair_status', 'Error: '+data.error, false); return; }
+    Plotly.newPlot('pair_chart', data.chart.data, data.chart.layout, plotDark);
+    renderStats(data.stats);
+    status('pair_status', a+' / '+b+' analysis ready', true);
+  } catch(e) { status('pair_status', 'Error: '+e.message, false); }
+}
+
+async function runBacktest() {
+  const a = document.getElementById('sym_a').value.toUpperCase();
+  const b = document.getElementById('sym_b').value.toUpperCase();
+  const p = document.getElementById('period').value;
+  status('pair_status', 'Running walk-forward backtest on '+a+' / '+b+'...', null);
+  try {
+    const res = await fetch('/api/v1/chart/pairs?a='+a+'&b='+b+'&period='+p+'&backtest=true');
+    const data = await res.json();
+    if (data.error) { status('pair_status', 'Error: '+data.error, false); return; }
+    Plotly.newPlot('pair_chart', data.chart.data, data.chart.layout, plotDark);
+    renderStats(data.stats);
+    renderBacktest(data.backtest_summary);
+    status('pair_status', a+' / '+b+' backtest complete', true);
+  } catch(e) { status('pair_status', 'Error: '+e.message, false); }
+}
+
+async function runScreen() {
+  const p = document.getElementById('period').value;
+  status('screen_status', 'Screening sector pairs...', null);
+  try {
+    const res = await fetch('/api/v1/pairs/screen?period='+p+'&sig=0.05');
+    const data = await res.json();
+    if (data.error) { status('screen_status', 'Error: '+data.error, false); return; }
+    if (data.length === 0) {
+      status('screen_status', 'No cointegrated pairs found', false);
+      document.getElementById('screen_table').innerHTML = '';
+      return;
+    }
+    let html = '<div class="panel overflow-x"><table><thead><tr>'+
+      '<th>Sector</th><th>Pair</th><th>p-value</th><th>Half-life</th>'+
+      '<th>Beta</th><th>z-score</th><th>Signal</th></tr></thead><tbody>';
+    for (const r of data) {
+      const tc = tagFor(r.signal);
+      html += '<tr>'+
+        '<td>'+r.sector+'</td>'+
+        '<td>'+r.asset_a+' / '+r.asset_b+'</td>'+
+        '<td class="'+(r.pvalue < 0.05 ? 'green' : 'red')+'">'+r.pvalue+'</td>'+
+        '<td>'+r.half_life+'d</td>'+
+        '<td>'+r.beta+'</td>'+
+        '<td>'+r.current_z+'</td>'+
+        '<td><span class="tag '+tc+'">'+r.signal+'</span></td>'+
+      '</tr>';
+    }
+    html += '</tbody></table></div>';
+    document.getElementById('screen_table').innerHTML = html;
+    status('screen_status', 'Found '+data.length+' cointegrated pair(s)', true);
+  } catch(e) { status('screen_status', 'Error: '+e.message, false); }
+}
+</script>
+</div>
+{% endblock %}

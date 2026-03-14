@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% block title %}Screener — qkit{% endblock %}
+{% block content %}
+<div class="header">
+  <h1>Screener</h1>
+  <div class="breadcrumb"><span>F9</span> FUNDAMENTALS</div>
+</div>
+<div class="content">
+
+<!-- ── Filters ────────────────────────────────────────────── -->
+<h2>Filters</h2>
+<div class="panel">
+  <div class="panel-body">
+    <div class="form-row" id="filter-form">
+      <div class="fg">
+        <label>P/E Min</label>
+        <input type="number" id="f-pe-min" placeholder="0" step="1">
+      </div>
+      <div class="fg">
+        <label>P/E Max</label>
+        <input type="number" id="f-pe-max" placeholder="100" step="1">
+      </div>
+      <div class="fg">
+        <label>P/B Min</label>
+        <input type="number" id="f-pb-min" placeholder="0" step="0.1">
+      </div>
+      <div class="fg">
+        <label>P/B Max</label>
+        <input type="number" id="f-pb-max" placeholder="50" step="0.1">
+      </div>
+      <div class="fg">
+        <label>Div Yield Min %</label>
+        <input type="number" id="f-div-min" placeholder="0" step="0.1">
+      </div>
+      <div class="fg">
+        <label>Mkt Cap Min ($B)</label>
+        <input type="number" id="f-mcap-min" placeholder="0" step="1">
+      </div>
+      <div class="fg">
+        <label>&nbsp;</label>
+        <button onclick="runScreen()">SCAN</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Results ────────────────────────────────────────────── -->
+<h2>Results <span id="result-count" style="color:var(--fg3);font-size:11px"></span></h2>
+<div id="screen-status" class="status-msg wait">Click SCAN to screen watchlist symbols</div>
+<div class="panel" id="results-panel" style="display:none;overflow-x:auto">
+  <table>
+    <thead>
+      <tr>
+        <th class="sortable" data-col="symbol" onclick="sortBy('symbol')">Symbol</th>
+        <th class="sortable num" data-col="last_price" onclick="sortBy('last_price')">Last</th>
+        <th class="sortable num" data-col="pe_ratio" onclick="sortBy('pe_ratio')">P/E</th>
+        <th class="sortable num" data-col="pb_ratio" onclick="sortBy('pb_ratio')">P/B</th>
+        <th class="sortable num" data-col="dividend_yield" onclick="sortBy('dividend_yield')">Div %</th>
+        <th class="sortable num" data-col="eps" onclick="sortBy('eps')">EPS</th>
+        <th class="sortable num" data-col="market_cap" onclick="sortBy('market_cap')">Mkt Cap</th>
+        <th class="sortable num" data-col="volume" onclick="sortBy('volume')">Volume</th>
+        <th>52W Range</th>
+      </tr>
+    </thead>
+    <tbody id="results-tbody"></tbody>
+  </table>
+</div>
+
+<!-- ── Add to Watchlist ───────────────────────────────────── -->
+<h2>Manage Watchlist</h2>
+<div class="panel">
+  <div class="panel-body">
+    <div class="form-row">
+      <div class="fg">
+        <label>Add Symbol</label>
+        <input type="text" id="add-sym" placeholder="AAPL" style="text-transform:uppercase">
+      </div>
+      <div class="fg">
+        <label>&nbsp;</label>
+        <button onclick="addSymbol()">ADD</button>
+      </div>
+      <div class="fg" style="flex:1">
+        <label>Current Watchlist</label>
+        <div id="watchlist-tags" style="display:flex;gap:4px;flex-wrap:wrap;padding:8px 0"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let results = [];
+let sortCol = 'symbol';
+let sortAsc = true;
+
+const status = (id, msg, ok) => {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = 'status-msg' + (ok === true ? ' ok' : ok === false ? ' err' : ' wait');
+};
+
+const fmtN = (v, d=2) => v != null ? Number(v).toFixed(d) : '—';
+const fmtPct = (v) => v != null ? (Number(v) * 100).toFixed(2) + '%' : '—';
+const fmtCap = (v) => {
+  if (v == null) return '—';
+  v = Number(v);
+  if (v >= 1e12) return '$' + (v / 1e12).toFixed(2) + 'T';
+  if (v >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+  if (v >= 1e6) return '$' + (v / 1e6).toFixed(0) + 'M';
+  return '$' + v.toLocaleString();
+};
+const fmtI = (v) => v != null ? Number(v).toLocaleString() : '—';
+
+async function runScreen() {
+  status('screen-status', 'Scanning watchlist symbols...', null);
+  try {
+    const params = new URLSearchParams();
+    const pe_min = document.getElementById('f-pe-min').value;
+    const pe_max = document.getElementById('f-pe-max').value;
+    const pb_min = document.getElementById('f-pb-min').value;
+    const pb_max = document.getElementById('f-pb-max').value;
+    const div_min = document.getElementById('f-div-min').value;
+    const mcap_min = document.getElementById('f-mcap-min').value;
+
+    if (pe_min) params.set('pe_min', pe_min);
+    if (pe_max) params.set('pe_max', pe_max);
+    if (pb_min) params.set('pb_min', pb_min);
+    if (pb_max) params.set('pb_max', pb_max);
+    if (div_min) params.set('div_min', div_min / 100);
+    if (mcap_min) params.set('mcap_min', mcap_min * 1e9);
+
+    const res = await fetch('/api/v1/screener?' + params.toString());
+    const data = await res.json();
+    if (data.error) { status('screen-status', 'Error: ' + data.error, false); return; }
+
+    results = data;
+    renderTable();
+    document.getElementById('result-count').textContent = '(' + results.length + ' matches)';
+    status('screen-status', results.length + ' symbols matched', true);
+    document.getElementById('results-panel').style.display = 'block';
+  } catch(e) {
+    status('screen-status', 'Error: ' + e.message, false);
+  }
+}
+
+function sortBy(col) {
+  if (sortCol === col) { sortAsc = !sortAsc; }
+  else { sortCol = col; sortAsc = true; }
+
+  // Update header indicators
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.textContent = th.textContent.replace(/ [▲▼]$/, '');
+    if (th.dataset.col === col) th.textContent += sortAsc ? ' ▲' : ' ▼';
+  });
+
+  renderTable();
+}
+
+function renderTable() {
+  const sorted = [...results].sort((a, b) => {
+    let va = a[sortCol], vb = b[sortCol];
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === 'string') return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    return sortAsc ? va - vb : vb - va;
+  });
+
+  const tbody = document.getElementById('results-tbody');
+  tbody.innerHTML = sorted.map(r =>
+    '<tr class="fade-up" onclick="location.href=\'/symbol/' + r.symbol + '\'" style="cursor:pointer">' +
+    '<td><span class="cyan" style="font-weight:600">' + r.symbol + '</span></td>' +
+    '<td class="num">$' + fmtN(r.last_price) + '</td>' +
+    '<td class="num">' + fmtN(r.pe_ratio, 1) + '</td>' +
+    '<td class="num">' + fmtN(r.pb_ratio, 2) + '</td>' +
+    '<td class="num">' + fmtPct(r.dividend_yield) + '</td>' +
+    '<td class="num">$' + fmtN(r.eps) + '</td>' +
+    '<td class="num">' + fmtCap(r.market_cap) + '</td>' +
+    '<td class="num">' + fmtI(r.volume) + '</td>' +
+    '<td style="font-size:12px;color:var(--fg3)">' +
+      (r.low_52w != null ? '$' + fmtN(r.low_52w, 0) + ' — $' + fmtN(r.high_52w, 0) : '—') +
+    '</td></tr>'
+  ).join('');
+}
+
+async function addSymbol() {
+  const input = document.getElementById('add-sym');
+  const sym = input.value.trim().toUpperCase();
+  if (!sym) return;
+  try {
+    await fetch('/api/v1/watchlist/' + sym, {method: 'POST'});
+    input.value = '';
+    loadWatchlist();
+  } catch(e) { /* ignore */ }
+}
+
+async function removeSymbol(sym) {
+  // Toggle off (if currently in watchlist)
+  try {
+    await fetch('/api/v1/watchlist/' + sym, {method: 'POST'});
+    loadWatchlist();
+  } catch(e) { /* ignore */ }
+}
+
+async function loadWatchlist() {
+  try {
+    const res = await fetch('/api/v1/watchlist');
+    const list = await res.json();
+    const el = document.getElementById('watchlist-tags');
+    el.innerHTML = list.map(s =>
+      '<span class="tag cyan" style="cursor:pointer" onclick="removeSymbol(\'' + s + '\')">' +
+      s + ' &times;</span>'
+    ).join('');
+  } catch(e) { /* ignore */ }
+}
+
+loadWatchlist();
+</script>
+{% endblock %}

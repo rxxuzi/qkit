@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}qkit{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/terminal.css">
+{% block head %}{% endblock %}
+<script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body>
+<div class="layout">
+  <!-- Top Status Bar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <span class="topbar-brand">QKIT</span>
+      <span class="topbar-sep">|</span>
+      <span class="topbar-item">QUANT TOOLKIT</span>
+    </div>
+    <div class="topbar-right">
+      <span class="topbar-item"><span class="status-dot live"></span>CONNECTED</span>
+      <span class="topbar-sep">|</span>
+      <span class="topbar-clock" id="topbar-clock"></span>
+    </div>
+  </div>
+
+  <!-- Navigation Bar -->
+  <nav class="navbar">
+    <a href="/" {% if request.path == '/' %}class="active"{% endif %}><span class="fkey">F1</span> DASH</a>
+    <a href="/symbol/SPY" {% if '/symbol' in request.path %}class="active"{% endif %}><span class="fkey">F2</span> SYMBOL</a>
+    <span class="sep"></span>
+    <a href="/pricer" {% if request.path == '/pricer' %}class="active"{% endif %}><span class="fkey">F3</span> PRICER</a>
+    <a href="/greeks" {% if request.path == '/greeks' %}class="active"{% endif %}><span class="fkey">F4</span> GREEKS</a>
+    <span class="sep"></span>
+    <a href="/analysis" {% if request.path == '/analysis' %}class="active"{% endif %}><span class="fkey">F5</span> ANALYSIS</a>
+    <a href="/pairs" {% if request.path == '/pairs' %}class="active"{% endif %}><span class="fkey">F6</span> PAIRS</a>
+    <span class="sep"></span>
+    <a href="/risk" {% if request.path == '/risk' %}class="active"{% endif %}><span class="fkey">F7</span> RISK</a>
+    <a href="/signals" {% if request.path == '/signals' %}class="active"{% endif %}><span class="fkey">F8</span> SIGNALS</a>
+    <span class="sep"></span>
+    <a href="/screener" {% if request.path == '/screener' %}class="active"{% endif %}><span class="fkey">F9</span> SCREEN</a>
+  </nav>
+
+  <!-- Main Content -->
+  <div class="main">{% block content %}{% endblock %}</div>
+</div>
+
+<script>
+function updateClock() {
+  const now = new Date();
+  const ny = now.toLocaleString('en-US', {timeZone:'America/New_York', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+  const tok = now.toLocaleString('en-US', {timeZone:'Asia/Tokyo', hour:'2-digit', minute:'2-digit', hour12:false});
+  document.getElementById('topbar-clock').textContent = 'NY ' + ny + '  TYO ' + tok;
+}
+updateClock();
+setInterval(updateClock, 1000);
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

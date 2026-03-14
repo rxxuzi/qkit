@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}QKIT — Dashboard{% endblock %}
+{% block content %}
+<div class="header">
+  <h1>Dashboard</h1>
+  <div class="breadcrumb"><span>F1</span> OVERVIEW</div>
+</div>
+<div class="content">
+
+<!-- ── 1. Alert Banner ──────────────────────────────────────── -->
+<div id="alert-banner" style="display:none"></div>
+
+<!-- ── 2. Signal Summary (3 cards) ──────────────────────────── -->
+<h2>Signal Summary</h2>
+<div class="grid g3" id="signal-cards">
+  <div class="card fade-up" id="card-vrp">
+    <div class="label">VRP</div>
+    <div class="value" id="vrp-val" style="color:var(--fg3)">—</div>
+    <div class="sub" id="vrp-sub">Loading...</div>
+  </div>
+  <div class="card fade-up" id="card-garch">
+    <div class="label">GARCH 30d Forecast</div>
+    <div class="value" id="garch-val" style="color:var(--fg3)">—</div>
+    <div class="sub" id="garch-sub">Loading...</div>
+  </div>
+  <div class="card fade-up" id="card-pairs">
+    <div class="label">Pairs (Most Extreme)</div>
+    <div class="value" id="pairs-val" style="color:var(--fg3)">—</div>
+    <div class="sub" id="pairs-sub">Loading...</div>
+  </div>
+</div>
+
+<!-- ── 3. Active Signals Table ──────────────────────────────── -->
+<h2>Active Signals</h2>
+<div class="panel" id="signals-panel">
+  <table>
+    <thead>
+      <tr>
+        <th>Source</th>
+        <th>Signal</th>
+        <th>Value</th>
+        <th>Threshold</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="signals-tbody">
+      <tr><td colspan="5" style="color:var(--fg3);text-align:center;padding:16px">Scanning signals...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── 4. Watchlist ─────────────────────────────────────────── -->
+<h2>Watchlist</h2>
+<div class="panel">
+  <table>
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th>Last</th>
+        <th>Chg</th>
+        <th>Chg%</th>
+        <th>Volume</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for sym in ["SPY","QQQ","AAPL","NVDA","MSFT","VIX"] %}
+      <tr class="fade-up" onclick="location.href='/symbol/{{ sym }}'" style="cursor:pointer">
+        <td><span class="cyan" style="font-weight:600">{{ sym }}</span></td>
+        <td class="num">—</td>
+        <td class="num">—</td>
+        <td class="num">—</td>
+        <td class="num">—</td>
+        <td><a href="/symbol/{{ sym }}" class="btn-ghost btn-sm" style="text-decoration:none">OPEN</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- ── 5. Modules ───────────────────────────────────────────── -->
+<h2>Modules</h2>
+<div class="grid g4">
+  <a href="/pricer" style="text-decoration:none">
+    <div class="card fade-up"><div class="label">F3 Pricer</div><div class="sub mt">BSM Call/Put + Greeks</div></div>
+  </a>
+  <a href="/greeks" style="text-decoration:none">
+    <div class="card fade-up"><div class="label">F4 Greeks</div><div class="sub mt">Sensitivity Heatmap</div></div>
+  </a>
+  <a href="/risk" style="text-decoration:none">
+    <div class="card fade-up"><div class="label">F7 Risk</div><div class="sub mt">VaR / CVaR</div></div>
+  </a>
+  <a href="/signals" style="text-decoration:none">
+    <div class="card fade-up"><div class="label">F8 Signals</div><div class="sub mt">VRP / Pairs / Regime</div></div>
+  </a>
+</div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Collected alerts & active signals ────────────────────────
+const alerts = [];
+const activeSignals = [];
+
+function renderAlerts() {
+  const el = document.getElementById('alert-banner');
+  if (alerts.length === 0) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = alerts.map(a =>
+    '<div style="padding:10px 28px;border-bottom:1px solid var(--border);'+
+    'background:'+(a.color==='red'?'rgba(255,51,51,.1)':'rgba(0,204,102,.1)')+';'+
+    'color:var(--'+ a.color +');font-size:14px;font-weight:600">'+
+    a.icon+' '+a.text+'</div>'
+  ).join('');
+}
+
+function renderSignalsTable() {
+  const tbody = document.getElementById('signals-tbody');
+  if (activeSignals.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--fg3);text-align:center;padding:16px">No active signals — all within normal range</td></tr>';
+    return;
+  }
+  tbody.innerHTML = activeSignals.map(s => {
+    const tc = s.tag === 'HIGH' || s.tag === 'SHORT' || s.tag === 'STOP' ? 'red' :
+               s.tag === 'LOW' || s.tag === 'LONG' ? 'green' : 'cyan';
+    return '<tr class="fade-up">'+
+      '<td>'+s.source+'</td>'+
+      '<td><span class="tag '+tc+'">'+s.tag+'</span></td>'+
+      '<td class="cyan">'+s.value+'</td>'+
+      '<td style="color:var(--fg3)">'+s.threshold+'</td>'+
+      '<td>'+s.action+'</td></tr>';
+  }).join('');
+}
+
+// ── Fetch VRP ────────────────────────────────────────────────
+async function loadVRP() {
+  try {
+    const res = await fetch('/api/v1/chart/vrp');
+    const data = await res.json();
+    if (data.error) {
+      document.getElementById('vrp-val').textContent = 'ERR';
+      document.getElementById('vrp-sub').textContent = data.error;
+      document.getElementById('vrp-val').style.color = 'var(--red)';
+      return;
+    }
+    const c = data.current;
+    const z = c.z_score;
+    const signal = c.signal.split(':')[0];
+
+    // Card
+    document.getElementById('vrp-val').textContent = z.toFixed(2) + 'σ';
+    document.getElementById('vrp-sub').textContent = signal + '  |  VRP = ' + (c.vrp * 10000).toFixed(1) + ' bps';
+
+    if (signal.includes('HIGH')) {
+      document.getElementById('vrp-val').style.color = 'var(--red)';
+      alerts.push({color:'red', icon:'▲', text:'VRP z-score at '+z.toFixed(2)+'σ — options overpriced, short vol opportunity'});
+      activeSignals.push({source:'VRP', tag:'HIGH', value:z.toFixed(2)+'σ', threshold:'z > 1.5', action:'Short vol (iron condor, straddle sell)'});
+    } else if (signal.includes('LOW')) {
+      document.getElementById('vrp-val').style.color = 'var(--green)';
+      alerts.push({color:'green', icon:'▼', text:'VRP z-score at '+z.toFixed(2)+'σ — risk underpriced, buy protection'});
+      activeSignals.push({source:'VRP', tag:'LOW', value:z.toFixed(2)+'σ', threshold:'z < -1.0', action:'Buy protection (OTM puts, VIX calls)'});
+    } else {
+      document.getElementById('vrp-val').style.color = 'var(--cyan)';
+    }
+
+    renderAlerts();
+    renderSignalsTable();
+  } catch(e) {
+    document.getElementById('vrp-val').textContent = '—';
+    document.getElementById('vrp-sub').textContent = 'Failed to load';
+  }
+}
+
+// ── Fetch GARCH ──────────────────────────────────────────────
+async function loadGARCH() {
+  try {
+    const res = await fetch('/api/v1/chart/garch?symbol=SPY');
+    const data = await res.json();
+    if (data.error) {
+      document.getElementById('garch-val').textContent = 'ERR';
+      document.getElementById('garch-sub').textContent = data.error;
+      document.getElementById('garch-val').style.color = 'var(--red)';
+      return;
+    }
+    const info = data.info;
+    document.getElementById('garch-val').textContent = info.forecast_30d_vol + '%';
+    document.getElementById('garch-val').style.color = 'var(--amber)';
+    document.getElementById('garch-sub').textContent =
+      'Persistence: ' + info.persistence + '  |  Half-life: ' + info.half_life + 'd';
+  } catch(e) {
+    document.getElementById('garch-val').textContent = '—';
+    document.getElementById('garch-sub').textContent = 'Failed to load';
+  }
+}
+
+// ── Fetch Pairs Screen ───────────────────────────────────────
+async function loadPairs() {
+  try {
+    const res = await fetch('/api/v1/pairs/screen?period=2y&sig=0.05');
+    const data = await res.json();
+    if (data.error) {
+      document.getElementById('pairs-val').textContent = 'ERR';
+      document.getElementById('pairs-sub').textContent = data.error;
+      document.getElementById('pairs-val').style.color = 'var(--red)';
+      return;
+    }
+    if (!data.length) {
+      document.getElementById('pairs-val').textContent = '—';
+      document.getElementById('pairs-sub').textContent = 'No cointegrated pairs found';
+      document.getElementById('pairs-val').style.color = 'var(--fg3)';
+      renderSignalsTable();
+      return;
+    }
+
+    // Find most extreme z-score
+    let extreme = data[0];
+    for (const p of data) {
+      if (Math.abs(parseFloat(p.current_z)) > Math.abs(parseFloat(extreme.current_z))) extreme = p;
+    }
+
+    const z = parseFloat(extreme.current_z);
+    const pair = extreme.asset_a + '/' + extreme.asset_b;
+    document.getElementById('pairs-val').textContent = pair + '  z=' + z.toFixed(2);
+    document.getElementById('pairs-sub').textContent =
+      extreme.signal + '  |  p=' + extreme.pvalue + '  |  HL=' + extreme.half_life + 'd';
+
+    if (extreme.signal.includes('SHORT') || extreme.signal.includes('LONG')) {
+      const isShort = extreme.signal.includes('SHORT');
+      document.getElementById('pairs-val').style.color = isShort ? 'var(--red)' : 'var(--green)';
+      alerts.push({
+        color: isShort ? 'red' : 'green',
+        icon: isShort ? '▼' : '▲',
+        text: pair + ' spread z=' + z.toFixed(2) + ' — ' + extreme.signal
+      });
+    } else {
+      document.getElementById('pairs-val').style.color = 'var(--cyan)';
+    }
+
+    // Add ALL pairs with active signals to the table
+    for (const p of data) {
+      if (p.signal === 'HOLD') continue;
+      const pz = parseFloat(p.current_z);
+      activeSignals.push({
+        source: 'Pairs (' + p.asset_a + '/' + p.asset_b + ')',
+        tag: p.signal.includes('SHORT') ? 'SHORT' : p.signal.includes('LONG') ? 'LONG' : p.signal,
+        value: 'z=' + pz.toFixed(2),
+        threshold: p.signal.includes('SHORT') ? 'z > 2.0' :
+                   p.signal.includes('LONG') ? 'z < -2.0' :
+                   p.signal === 'EXIT' ? '|z| < 0.5' : '|z| > 4.0',
+        action: p.signal.includes('SHORT') ? 'Short ' + p.asset_b + ', buy ' + p.asset_a :
+                p.signal.includes('LONG') ? 'Buy ' + p.asset_b + ', short ' + p.asset_a :
+                p.signal === 'EXIT' ? 'Close position' : 'Stop loss'
+      });
+    }
+
+    renderAlerts();
+    renderSignalsTable();
+  } catch(e) {
+    document.getElementById('pairs-val').textContent = '—';
+    document.getElementById('pairs-sub').textContent = 'Failed to load';
+  }
+}
+
+// ── Fetch Store Alerts ────────────────────────────────────────
+async function loadStoreAlerts() {
+  try {
+    const res = await fetch('/api/v1/alerts');
+    const data = await res.json();
+    if (!data.length) return;
+    for (const a of data) {
+      const color = a.level === 'CRITICAL' ? 'red' : a.source === 'VRP' && a.value < 0 ? 'green' : 'red';
+      alerts.push({color: color, icon: a.level === 'CRITICAL' ? '!!' : '▲', text: a.message, id: a.id});
+    }
+    renderAlerts();
+  } catch(e) { /* ignore */ }
+}
+
+// ── Fire all in parallel ─────────────────────────────────────
+loadVRP();
+loadGARCH();
+loadPairs();
+loadStoreAlerts();
+</script>
+{% endblock %}

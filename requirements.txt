@@ -1,0 +1,32 @@
+# === Data Sources ===
+moomoo-api>=2.5.0          # Primary: real-time data via OpenD gateway
+yfinance>=0.2.36           # Fallback: free delayed data for quick prototyping
+
+# === Core Scientific Stack ===
+numpy>=1.26.0
+pandas>=2.2.0
+scipy>=1.12.0
+
+# === Options Pricing ===
+QuantLib>=1.33             # ※旧名 QuantLib-Python は非推奨
+mibian>=0.1.2
+py_vollib>=1.0.1
+
+# === Volatility / Time Series ===
+arch>=7.0.0
+statsmodels>=0.14.0
+
+# === Visualization ===
+plotly>=5.18.0
+matplotlib>=3.8.0
+seaborn>=0.13.0
+kaleido>=0.2.1             # plotly の静的画像出力 (.png/.svg) に必要
+
+# === Reports ===
+jinja2>=3.1.0              # HTML report templating
+tabulate>=0.9.0            # CLI table formatting
+
+# === Utilities ===
+python-dotenv>=1.0.0       # .env for API keys
+rich>=13.7.0               # Pretty terminal output
+flask>=3.0.0               # Web dashboard

@@ -1,0 +1,493 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol }} — Symbol{% endblock %}
+{% block content %}
+<div class="header">
+  <div style="display:flex;align-items:center;gap:12px">
+    <span id="watchlist-star" onclick="toggleWatchlist()" style="font-size:24px;cursor:pointer;color:var(--fg3);transition:color .15s" title="Add to watchlist">☆</span>
+    <div>
+      <h1 id="sym-title">{{ symbol }}</h1>
+      <div id="sym-price" class="breadcrumb">Loading...</div>
+    </div>
+  </div>
+  <div style="display:flex;gap:6px;align-items:center">
+    <button class="btn-ghost btn-sm" id="copy-btn" onclick="copyReport()">COPY</button>
+    <a href="/options/{{ symbol }}" class="btn-ghost btn-sm" style="text-decoration:none">OPTIONS</a>
+    <button class="btn-ghost btn-sm" onclick="openWatchlistModal()">WATCHLIST</button>
+  </div>
+</div>
+<!-- ── Watchlist Modal ─────────────────────────────────────── -->
+<div id="wl-modal" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.7);backdrop-filter:blur(4px)" onclick="if(event.target===this)closeWatchlistModal()">
+  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg1);border:1px solid var(--border);width:340px;max-height:70vh;display:flex;flex-direction:column">
+    <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+      <span style="color:var(--amber);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px">Watchlist</span>
+      <span onclick="closeWatchlistModal()" style="cursor:pointer;color:var(--fg3);font-size:18px">&times;</span>
+    </div>
+    <div id="wl-modal-list" style="overflow-y:auto;flex:1"></div>
+  </div>
+</div>
+
+<div class="content">
+<script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+
+<!-- ── 1. Key Metrics (4 cards) ────────────────────────────── -->
+<h2>Key Metrics</h2>
+<div class="grid g4" id="key-metrics">
+  <div class="card fade-up"><div class="label">Last Price</div><div class="value" id="m-price">—</div></div>
+  <div class="card fade-up"><div class="label">Change</div><div class="value" id="m-change">—</div></div>
+  <div class="card fade-up"><div class="label">Volume</div><div class="value" id="m-volume">—</div></div>
+  <div class="card fade-up"><div class="label">Market Cap</div><div class="value" id="m-mcap">—</div></div>
+</div>
+
+<!-- ── 2. Fundamentals ─────────────────────────────────────── -->
+<h2>Fundamentals</h2>
+<div class="grid g2">
+  <div class="panel">
+    <div class="panel-head">Valuation</div>
+    <div class="panel-body">
+      <table>
+        <tr><td>P/E Ratio</td><td class="num cyan" id="f-pe">—</td></tr>
+        <tr><td>P/B Ratio</td><td class="num cyan" id="f-pb">—</td></tr>
+        <tr><td>EPS</td><td class="num cyan" id="f-eps">—</td></tr>
+        <tr><td>Dividend Yield</td><td class="num cyan" id="f-div">—</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head">Price Range</div>
+    <div class="panel-body">
+      <table>
+        <tr><td>Open</td><td class="num cyan" id="f-open">—</td></tr>
+        <tr><td>High / Low</td><td class="num cyan" id="f-hl">—</td></tr>
+        <tr><td>Prev Close</td><td class="num cyan" id="f-prev">—</td></tr>
+        <tr><td>52W High / Low</td><td class="num cyan" id="f-52w">—</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ── 3. Chart (TradingView) ──────────────────────────────── -->
+<h2>Chart</h2>
+<div class="tv-wrap" style="height:420px">
+  <div class="tradingview-widget-container" style="height:100%;width:100%">
+    <div id="tv_chart" style="height:100%;width:100%"></div>
+    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+    <script type="text/javascript">
+    new TradingView.widget({
+      "autosize": true,
+      "symbol": "{{ symbol }}",
+      "interval": "D",
+      "timezone": "America/New_York",
+      "theme": "dark",
+      "style": "1",
+      "locale": "en",
+      "backgroundColor": "rgba(0, 0, 0, 1)",
+      "gridColor": "rgba(255, 255, 255, 0.03)",
+      "hide_side_toolbar": false,
+      "allow_symbol_change": true,
+      "studies": ["MASimple@tv-basicstudies", "RSI@tv-basicstudies"],
+      "container_id": "tv_chart"
+    });
+    </script>
+  </div>
+</div>
+
+<!-- ── 4. BSM Quick Pricer ─────────────────────────────────── -->
+<h2>BSM Pricing</h2>
+<div class="card">
+  <div class="form-row">
+    <div class="fg"><label>Strike ($)</label><input type="number" id="bsm-K" value="0" step="1"></div>
+    <div class="fg"><label>Days</label><input type="number" id="bsm-T" value="30" step="1"></div>
+    <div class="fg"><label>Vol (%)</label><input type="number" id="bsm-sigma" value="22" step="1"></div>
+    <button onclick="quickPrice()">Price</button>
+  </div>
+  <div id="bsm-result" style="margin-top:10px"></div>
+</div>
+
+<!-- ── 5. GARCH Volatility ─────────────────────────────────── -->
+<h2>GARCH Volatility</h2>
+<div id="garch-status" class="status-msg wait">Loading GARCH(1,1)...</div>
+<div class="grid g4" id="garch-info" style="margin-top:8px"></div>
+<div id="garch-chart" style="overflow:hidden;margin-top:8px"></div>
+
+<!-- ── 6. IV Surface ───────────────────────────────────────── -->
+<h2>IV Surface</h2>
+<div id="iv-status" class="status-msg wait">Loading IV surface...</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+  <div id="iv-surface" style="overflow:hidden;min-height:480px"></div>
+  <div id="iv-smile" style="overflow:hidden;min-height:480px"></div>
+</div>
+<div class="grid g3" id="iv-info" style="margin-top:8px"></div>
+
+<!-- ── 7. Greeks (ATM) ─────────────────────────────────────── -->
+<h2>Greeks Dashboard</h2>
+<div id="greeks-status" class="status-msg wait">Loading Greeks...</div>
+<div id="greeks-chart" style="overflow:hidden;margin-top:8px"></div>
+
+<!-- ── 8. Signals ──────────────────────────────────────────── -->
+<h2>Signals</h2>
+<div class="panel" id="signals-panel">
+  <table>
+    <thead>
+      <tr>
+        <th>Source</th>
+        <th>Signal</th>
+        <th>Value</th>
+        <th>Date</th>
+      </tr>
+    </thead>
+    <tbody id="signals-tbody">
+      <tr><td colspan="4" style="color:var(--fg3);text-align:center;padding:16px">Loading signals...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SYM = '{{ symbol }}';
+const plotDark = {displayModeBar: true, responsive: true, displaylogo: false};
+
+// Cached data for copy report
+let _snap = null, _garchInfo = null, _ivData = null, _bsmResult = null;
+
+const status = (id, msg, ok) => {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = 'status-msg' + (ok === true ? ' ok' : ok === false ? ' err' : ' wait');
+};
+
+const fmt = (v, dec=2) => v != null ? Number(v).toFixed(dec) : '—';
+const fmtPct = (v) => v != null ? (Number(v) * 100).toFixed(2) + '%' : '—';
+const fmtInt = (v) => v != null ? Number(v).toLocaleString() : '—';
+const fmtCap = (v) => {
+  if (v == null) return '—';
+  v = Number(v);
+  if (v >= 1e12) return '$' + (v / 1e12).toFixed(2) + 'T';
+  if (v >= 1e9) return '$' + (v / 1e9).toFixed(2) + 'B';
+  if (v >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+  return '$' + v.toLocaleString();
+};
+
+// ── 1. Fundamentals from Store ──────────────────────────────
+async function loadSnapshot() {
+  try {
+    const res = await fetch('/api/v1/symbol/' + SYM + '/snapshot');
+    const d = await res.json();
+    if (d.error || !d.symbol) {
+      document.getElementById('sym-price').textContent = 'No snapshot data';
+      return;
+    }
+    _snap = d;
+    const price = d.last_price;
+    const prev = d.prev_close;
+    let chgText = '';
+    if (price != null && prev != null && prev > 0) {
+      const chg = price - prev;
+      const chgPct = (chg / prev) * 100;
+      const sign = chg >= 0 ? '+' : '';
+      const cls = chg >= 0 ? 'green' : 'red';
+      chgText = '<span class="' + cls + '">' + sign + chg.toFixed(2) + ' (' + sign + chgPct.toFixed(2) + '%)</span>';
+      document.getElementById('m-change').innerHTML = sign + chg.toFixed(2);
+      document.getElementById('m-change').style.color = chg >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+    document.getElementById('sym-price').innerHTML = '$' + fmt(price) + '  ' + chgText;
+    document.getElementById('m-price').textContent = '$' + fmt(price);
+    document.getElementById('m-volume').textContent = fmtInt(d.volume);
+    document.getElementById('m-mcap').textContent = fmtCap(d.market_cap);
+
+    document.getElementById('f-pe').textContent = fmt(d.pe_ratio, 1);
+    document.getElementById('f-pb').textContent = fmt(d.pb_ratio, 2);
+    document.getElementById('f-eps').textContent = '$' + fmt(d.eps, 2);
+    document.getElementById('f-div').textContent = fmtPct(d.dividend_yield);
+    document.getElementById('f-open').textContent = '$' + fmt(d.open_price);
+    document.getElementById('f-hl').textContent = '$' + fmt(d.high_price) + ' / $' + fmt(d.low_price);
+    document.getElementById('f-prev').textContent = '$' + fmt(d.prev_close);
+    document.getElementById('f-52w').textContent = '$' + fmt(d.high_52w) + ' / $' + fmt(d.low_52w);
+
+    // Set BSM strike default to spot price
+    const kInput = document.getElementById('bsm-K');
+    if (kInput.value === '0' && price != null) kInput.value = Math.round(price);
+  } catch(e) {
+    document.getElementById('sym-price').textContent = 'Failed to load snapshot';
+  }
+}
+
+// ── 2. BSM Quick Pricer ─────────────────────────────────────
+async function quickPrice() {
+  const K = document.getElementById('bsm-K').value || 0;
+  const T = document.getElementById('bsm-T').value;
+  const sigma = document.getElementById('bsm-sigma').value;
+  const res = await fetch('/api/v1/bsm?S=' + K + '&K=' + K + '&T=' + T + '&r=4.3&sigma=' + sigma);
+  const d = await res.json();
+  if (d.error) { document.getElementById('bsm-result').innerHTML = '<span class="red">' + d.error + '</span>'; return; }
+  _bsmResult = d;
+  const cg = d.call_greeks;
+  document.getElementById('bsm-result').innerHTML =
+    '<div class="grid g4" style="margin-top:8px">' +
+      '<div class="card fade-up"><div class="label">Call</div><div class="value green">$' + d.call + '</div></div>' +
+      '<div class="card fade-up"><div class="label">Put</div><div class="value red">$' + d.put + '</div></div>' +
+      '<div class="card fade-up"><div class="label">Delta</div><div class="value">' + cg.delta.toFixed(4) + '</div></div>' +
+      '<div class="card fade-up"><div class="label">Gamma</div><div class="value">' + cg.gamma.toFixed(4) + '</div></div>' +
+    '</div>' +
+    '<div class="grid g4" style="margin-top:6px">' +
+      '<div class="card fade-up"><div class="label">Vega</div><div class="value">' + cg.vega.toFixed(4) + '</div></div>' +
+      '<div class="card fade-up"><div class="label">Theta</div><div class="value red">' + cg.theta.toFixed(4) + '</div></div>' +
+      '<div class="card fade-up"><div class="label">Rho</div><div class="value">' + cg.rho.toFixed(4) + '</div></div>' +
+      '<div class="card fade-up"><div class="label">Parity</div><div class="value"><span class="tag ' + (d.parity.passed ? 'green' : 'red') + '">' + (d.parity.passed ? 'PASS' : 'FAIL') + '</span></div></div>' +
+    '</div>';
+}
+
+// ── 3. GARCH ────────────────────────────────────────────────
+async function loadGarch() {
+  status('garch-status', 'Fitting GARCH(1,1) on ' + SYM + '...', null);
+  try {
+    const res = await fetch('/api/v1/chart/garch?symbol=' + SYM);
+    const data = await res.json();
+    if (data.error) { status('garch-status', 'Error: ' + data.error, false); return; }
+    Plotly.newPlot('garch-chart', data.chart.data, data.chart.layout, plotDark);
+    const info = data.info;
+    _garchInfo = info;
+    document.getElementById('garch-info').innerHTML =
+      '<div class="card fade-up"><div class="label">Persistence</div><div class="value cyan">' + info.persistence + '</div></div>' +
+      '<div class="card fade-up"><div class="label">Half-life</div><div class="value">' + info.half_life + '<span style="font-size:12px;color:var(--fg3)"> days</span></div></div>' +
+      '<div class="card fade-up"><div class="label">Unconditional Vol</div><div class="value">' + info.unconditional_vol + '%</div></div>' +
+      '<div class="card fade-up"><div class="label">30d Forecast</div><div class="value amber">' + info.forecast_30d_vol + '%</div></div>';
+    status('garch-status', 'GARCH(1,1) fitted', true);
+  } catch(e) { status('garch-status', 'Error: ' + e.message, false); }
+}
+
+// ── 4. IV Surface ───────────────────────────────────────────
+async function loadIV() {
+  status('iv-status', 'Computing IV surface for ' + SYM + '...', null);
+  try {
+    const res = await fetch('/api/v1/chart/iv_surface?symbol=' + SYM);
+    const data = await res.json();
+    if (data.error) { status('iv-status', 'Error: ' + data.error, false); return; }
+    _ivData = data;
+    if (data.surface) {
+      data.surface.layout.height = 480;
+      Plotly.newPlot('iv-surface', data.surface.data, data.surface.layout, plotDark);
+    }
+    if (data.smile) {
+      data.smile.layout.height = 480;
+      Plotly.newPlot('iv-smile', data.smile.data, data.smile.layout, plotDark);
+    }
+    document.getElementById('iv-info').innerHTML =
+      '<div class="card fade-up"><div class="label">Spot</div><div class="value cyan">$' + (data.spot || 0).toFixed(2) + '</div></div>' +
+      '<div class="card fade-up"><div class="label">Contracts</div><div class="value">' + (data.n_contracts || 0) + '</div></div>' +
+      '<div class="card fade-up"><div class="label">Status</div><div class="value"><span class="tag green">LIVE</span></div></div>';
+    status('iv-status', data.n_contracts + ' contracts loaded', true);
+  } catch(e) { status('iv-status', 'Error: ' + e.message, false); }
+}
+
+// ── 5. Greeks ───────────────────────────────────────────────
+async function loadGreeks() {
+  status('greeks-status', 'Computing Greeks dashboard...', null);
+  try {
+    const priceEl = document.getElementById('m-price').textContent;
+    const S = priceEl.startsWith('$') ? parseFloat(priceEl.slice(1)) || 230 : 230;
+    const res = await fetch('/api/v1/chart/greeks_dashboard?S=' + S + '&sigma=22&type=call');
+    const data = await res.json();
+    if (data.error) { status('greeks-status', 'Error: ' + data.error, false); return; }
+    Plotly.newPlot('greeks-chart', data.data, data.layout, plotDark);
+    status('greeks-status', 'Greeks dashboard ready', true);
+  } catch(e) { status('greeks-status', 'Error: ' + e.message, false); }
+}
+
+// ── 6. Signals from Store ───────────────────────────────────
+async function loadSignals() {
+  try {
+    const res = await fetch('/api/v1/symbol/' + SYM + '/signals');
+    const data = await res.json();
+    const tbody = document.getElementById('signals-tbody');
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:var(--fg3);text-align:center;padding:16px">No signals for ' + SYM + '</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.map(s => {
+      const tc = s.signal.includes('HIGH') || s.signal.includes('SHORT') || s.signal.includes('STOP') ? 'red' :
+                 s.signal.includes('LOW') || s.signal.includes('LONG') ? 'green' : 'cyan';
+      return '<tr class="fade-up">' +
+        '<td>' + s.source + '</td>' +
+        '<td><span class="tag ' + tc + '">' + s.signal + '</span></td>' +
+        '<td class="num cyan">' + (s.z_score != null ? s.z_score.toFixed(2) + 'σ' : s.value != null ? s.value.toFixed(4) : '—') + '</td>' +
+        '<td style="color:var(--fg3)">' + (s.date || '—') + '</td></tr>';
+    }).join('');
+  } catch(e) {
+    document.getElementById('signals-tbody').innerHTML =
+      '<tr><td colspan="4" style="color:var(--red);text-align:center;padding:16px">Failed to load signals</td></tr>';
+  }
+}
+
+// ── Watchlist toggle ────────────────────────────────────────
+function setStarState(watching) {
+  const star = document.getElementById('watchlist-star');
+  star.textContent = watching ? '★' : '☆';
+  star.style.color = watching ? 'var(--cyan)' : 'var(--fg3)';
+  star.title = watching ? 'Remove from watchlist' : 'Add to watchlist';
+}
+
+async function toggleWatchlist() {
+  try {
+    const res = await fetch('/api/v1/watchlist/' + SYM, {method: 'POST'});
+    const d = await res.json();
+    setStarState(d.action === 'added');
+  } catch(e) { /* ignore */ }
+}
+
+async function checkWatchlist() {
+  try {
+    const res = await fetch('/api/v1/watchlist');
+    const list = await res.json();
+    setStarState(list.includes(SYM));
+  } catch(e) { /* ignore */ }
+}
+
+// ── Watchlist Modal ─────────────────────────────────────────
+async function openWatchlistModal() {
+  const modal = document.getElementById('wl-modal');
+  const list = document.getElementById('wl-modal-list');
+  modal.style.display = 'block';
+  list.innerHTML = '<div style="padding:20px;color:var(--fg3);text-align:center">Loading...</div>';
+  try {
+    const res = await fetch('/api/v1/watchlist');
+    const syms = await res.json();
+    if (!syms.length) {
+      list.innerHTML = '<div style="padding:20px;color:var(--fg3);text-align:center">Watchlist is empty</div>';
+      return;
+    }
+    list.innerHTML = syms.map(s =>
+      '<a href="/symbol/' + s + '" style="display:flex;align-items:center;padding:10px 16px;color:var(--fg);text-decoration:none;border-bottom:1px solid var(--border);transition:background .1s' +
+      (s === SYM ? ';background:var(--bg3)' : '') + '"' +
+      ' onmouseenter="this.style.background=\'var(--bg2)\'" onmouseleave="this.style.background=\'' + (s === SYM ? 'var(--bg3)' : '') + '\'">' +
+      '<span style="color:var(--cyan);font-weight:600;width:70px">' + s + '</span>' +
+      (s === SYM ? '<span style="color:var(--fg3);font-size:11px;margin-left:auto">current</span>' : '') +
+      '</a>'
+    ).join('');
+  } catch(e) {
+    list.innerHTML = '<div style="padding:20px;color:var(--red);text-align:center">Failed to load</div>';
+  }
+}
+
+function closeWatchlistModal() {
+  document.getElementById('wl-modal').style.display = 'none';
+}
+
+// ESC to close
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeWatchlistModal(); });
+
+// ── Copy Report ─────────────────────────────────────────────
+function copyReport() {
+  const g = id => (document.getElementById(id)?.textContent || '—').trim();
+  const today = new Date().toISOString().slice(0, 10);
+  const f = (v, d=2) => v != null ? Number(v).toFixed(d) : '—';
+
+  const lines = [
+    '## ' + SYM + ' Summary (' + today + ')',
+    '',
+    '### Price',
+    'Last: ' + g('m-price'),
+    'Change: ' + g('m-change'),
+    'Volume: ' + g('m-volume'),
+    'Market Cap: ' + g('m-mcap'),
+    '',
+    '### Fundamentals',
+    'P/E: ' + g('f-pe'),
+    'P/B: ' + g('f-pb'),
+    'EPS: ' + g('f-eps'),
+    'Dividend Yield: ' + g('f-div'),
+    'Open: ' + g('f-open'),
+    'High / Low: ' + g('f-hl'),
+    'Prev Close: ' + g('f-prev'),
+    '52W Range: ' + g('f-52w'),
+  ];
+
+  // GARCH
+  if (_garchInfo) {
+    const gi = _garchInfo;
+    lines.push('', '### GARCH(1,1)',
+      'Persistence: ' + gi.persistence,
+      'Half-life: ' + gi.half_life + ' days',
+      'Unconditional Vol: ' + gi.unconditional_vol + '%',
+      '30d Forecast: ' + gi.forecast_30d_vol + '%',
+      'Log-Likelihood: ' + gi.log_likelihood,
+    );
+  }
+
+  // IV Surface
+  if (_ivData) {
+    lines.push('', '### Implied Volatility',
+      'Spot: $' + f(_ivData.spot),
+      'Contracts: ' + (_ivData.n_contracts || 0),
+    );
+    // Extract ATM IV from smile data
+    if (_ivData.smile && _ivData.smile.data) {
+      for (const trace of _ivData.smile.data) {
+        if (trace.x && trace.y && trace.name) {
+          // Find strike closest to spot
+          let minDist = Infinity, atmIV = null;
+          for (let i = 0; i < trace.x.length; i++) {
+            const dist = Math.abs(trace.x[i] - _ivData.spot);
+            if (dist < minDist) { minDist = dist; atmIV = trace.y[i]; }
+          }
+          if (atmIV != null) lines.push('ATM IV (' + trace.name + '): ' + f(atmIV, 1) + '%');
+        }
+      }
+    }
+  }
+
+  // BSM Greeks (if user ran pricer)
+  if (_bsmResult) {
+    const b = _bsmResult;
+    const cg = b.call_greeks;
+    const pg = b.put_greeks;
+    lines.push('', '### BSM Pricing (K=' + document.getElementById('bsm-K').value + ', T=' + document.getElementById('bsm-T').value + 'd, σ=' + document.getElementById('bsm-sigma').value + '%)',
+      'Call: $' + b.call,
+      'Put: $' + b.put,
+      '',
+      '| Greek | Call | Put |',
+      '|-------|------|-----|',
+      '| Delta | ' + f(cg.delta, 4) + ' | ' + f(pg.delta, 4) + ' |',
+      '| Gamma | ' + f(cg.gamma, 6) + ' | ' + f(pg.gamma, 6) + ' |',
+      '| Vega  | ' + f(cg.vega, 4) + ' | ' + f(pg.vega, 4) + ' |',
+      '| Theta | ' + f(cg.theta, 4) + ' | ' + f(pg.theta, 4) + ' |',
+      '| Rho   | ' + f(cg.rho, 4) + ' | ' + f(pg.rho, 4) + ' |',
+      '',
+      'Put-Call Parity: ' + (b.parity.passed ? 'PASS' : 'FAIL'),
+    );
+  }
+
+  // Signals
+  const sigRows = document.querySelectorAll('#signals-tbody tr');
+  const hasSigs = sigRows.length > 0 && !sigRows[0].querySelector('td[colspan]');
+  if (hasSigs) {
+    lines.push('', '### Signals');
+    sigRows.forEach(tr => {
+      const cells = tr.querySelectorAll('td');
+      if (cells.length >= 4) {
+        lines.push('- ' + cells[0].textContent + ': ' + cells[1].textContent.trim() + ' (' + cells[2].textContent.trim() + ') — ' + cells[3].textContent.trim());
+      }
+    });
+  }
+
+  lines.push('', '---', 'Generated by QKIT | ' + today);
+
+  navigator.clipboard.writeText(lines.join('\n')).then(() => {
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = 'COPIED';
+    btn.className = 'btn btn-sm';
+    setTimeout(() => { btn.textContent = 'COPY'; btn.className = 'btn-ghost btn-sm'; }, 1500);
+  });
+}
+
+// ── Fire all in parallel ────────────────────────────────────
+loadSnapshot();
+checkWatchlist();
+loadSignals();
+loadGarch();
+loadIV();
+setTimeout(loadGreeks, 500);
+</script>
+{% endblock %}

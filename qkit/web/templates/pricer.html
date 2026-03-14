@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}QKIT — Pricer{% endblock %}
+{% block content %}
+<div class="header">
+  <h1>BSM Pricer</h1>
+  <div class="breadcrumb"><span>F3</span> PRICING</div>
+</div>
+<div class="content">
+<div class="card">
+  <div class="form-row">
+    <div class="fg"><label>Spot ($)</label><input type="number" id="S" value="230" step="1"></div>
+    <div class="fg"><label>Strike ($)</label><input type="number" id="K" value="235" step="1"></div>
+    <div class="fg"><label>Days</label><input type="number" id="T" value="30" step="1"></div>
+    <div class="fg"><label>Rate (%)</label><input type="number" id="r" value="4.3" step="0.1"></div>
+    <div class="fg"><label>Vol (%)</label><input type="number" id="sigma" value="22" step="1"></div>
+    <button onclick="compute()">Price</button>
+  </div>
+</div>
+<div id="result"></div>
+<script>
+async function compute(){
+  const p=['S','K','T','r','sigma'].map(k=>k+'='+document.getElementById(k).value).join('&');
+  const d=await(await fetch('/api/v1/bsm?'+p)).json();
+  if(d.error){document.getElementById('result').innerHTML='<div class="card" style="border-color:var(--red);margin-top:8px">'+d.error+'</div>';return}
+  const cg=d.call_greeks,pg=d.put_greeks;
+  const row=(l,v)=>'<tr><td style="color:var(--amber)">'+l+'</td><td>'+v+'</td></tr>';
+  document.getElementById('result').innerHTML=
+  '<div class="grid g2" style="margin-top:8px">'+
+    '<div class="card fade-up"><div class="label">CALL</div><div class="value green">$'+d.call+'</div>'+
+      '<table style="margin-top:8px">'+row('Delta',cg.delta.toFixed(6))+row('Gamma',cg.gamma.toFixed(6))+row('Vega',cg.vega.toFixed(6))+row('Theta',cg.theta.toFixed(6))+row('Rho',cg.rho.toFixed(6))+'</table></div>'+
+    '<div class="card fade-up"><div class="label">PUT</div><div class="value red">$'+d.put+'</div>'+
+      '<table style="margin-top:8px">'+row('Delta',pg.delta.toFixed(6))+row('Gamma',pg.gamma.toFixed(6))+row('Vega',pg.vega.toFixed(6))+row('Theta',pg.theta.toFixed(6))+row('Rho',pg.rho.toFixed(6))+'</table></div>'+
+  '</div>'+
+  '<div class="card fade-up" style="margin-top:6px"><div class="label">Put-Call Parity</div>'+
+    '<span class="tag '+(d.parity.passed?'green':'red')+'" style="margin-top:6px;display:inline-block">'+(d.parity.passed?'PASS':'FAIL')+'</span>'+
+    '<span style="color:var(--fg3);font-size:11px;margin-left:10px">diff = '+d.parity.difference.toExponential(2)+'</span></div>';
+}
+compute();
+</script>
+</div>
+{% endblock %}

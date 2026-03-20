@@ -2,7 +2,7 @@
 
 Pure Python quantitative finance toolkit. numpy + scipy only.
 
-![symbol page screenshot](./doc/img/symbol.png)
+![symbol page screenshot](./screenshot.png)
 
 ## Models
 

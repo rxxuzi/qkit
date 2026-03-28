@@ -520,6 +520,211 @@ def cmd_pair(args):
     print()
 
 
+def cmd_opt(args):
+    """Options contract analysis."""
+    from qkit.data import get_provider
+    from qkit.data.contract import parse_contract, resolve_strike, find_expiry
+    from qkit.pricing.bsm import BSM
+    from qkit.pricing.iv import implied_vol
+    from qkit.pricing import analysis
+    import datetime
+    import numpy as np
+
+    # Parse contract spec
+    spec = f"{args.symbol} {args.code}"
+    try:
+        contract = parse_contract(spec)
+    except ValueError as exc:
+        _err(str(exc))
+        return
+
+    symbol = contract.symbol
+    r = args.rate or 0.043
+
+    with _catch_warnings():
+        provider = get_provider()
+        spot = provider.get_spot_price(symbol)
+        chain = provider.get_option_chain(symbol)
+
+    # Resolve expiry in chain
+    try:
+        chain_expiry = find_expiry(contract, chain)
+    except ValueError as exc:
+        _err(str(exc))
+        _info(f"  Available: {', '.join(chain.expiries()[:8])}")
+        return
+
+    # Time to expiry
+    exp_date = datetime.date.fromisoformat(chain_expiry)
+    today = datetime.date.today()
+    days = (exp_date - today).days
+    if days <= 0:
+        _err(f"Expiry {chain_expiry} is in the past")
+        return
+    T = days / 365.0
+
+    # Resolve strike
+    if args.strike:
+        contract.strike = args.strike
+    strike = resolve_strike(contract, chain, spot)
+    opt_type = contract.option_type
+
+    _header(f"Options  {symbol}  {chain_expiry}  {opt_type.upper()}  K=${strike:.1f}")
+    _kv("Spot", f"${spot:.2f}")
+    _kv("Days", f"{days}")
+    _kv("T", f"{T:.4f} yr")
+
+    # ── Target quote ──────────────────────────────────────────
+    exp_quotes = chain.by_expiry(chain_expiry)
+    target = None
+    for q in exp_quotes:
+        if q.option_type == opt_type and abs(q.strike - strike) < 0.01:
+            target = q
+            break
+
+    if target is None:
+        # Find nearest
+        same_type = [q for q in exp_quotes if q.option_type == opt_type]
+        if same_type:
+            same_type.sort(key=lambda q: abs(q.strike - strike))
+            target = same_type[0]
+            strike = target.strike
+            _warn(f"Exact strike not found, using K=${strike:.1f}")
+
+    if target is not None and target.mid > 0:
+        # Use provider IV when available (skip expensive Brentq)
+        iv_val = (target.implied_vol
+                  if target.implied_vol and target.implied_vol > 0.001
+                  else implied_vol(target.mid, spot, strike, T, r, opt_type,
+                                   method="newton"))
+        print()
+        _info("  Quote")
+        _kv("Bid", f"${target.bid:.2f}", 6)
+        _kv("Ask", f"${target.ask:.2f}", 6)
+        _kv("Mid", f"${target.mid:.2f}", 6)
+        _kv("Volume", f"{target.volume:,}", 6)
+        _kv("Open Int", f"{target.open_interest:,}", 6)
+        if not np.isnan(iv_val):
+            _kv("IV", f"{iv_val*100:.1f}%", 6)
+
+        # Greeks
+        if not np.isnan(iv_val) and iv_val > 0:
+            m = BSM(S=spot, K=strike, T=T, r=r, sigma=iv_val)
+            greeks = m.call_greeks() if opt_type == "call" else m.put_greeks()
+            price = m.call_price() if opt_type == "call" else m.put_price()
+
+            print()
+            _info("  Greeks")
+            _kv("BSM Price", f"${price:.4f}", 6)
+            _kv("Delta", f"{greeks.delta:+.4f}", 6)
+            _kv("Gamma", f"{greeks.gamma:+.6f}", 6)
+            _kv("Vega", f"{greeks.vega:+.4f}", 6)
+            _kv("Theta", f"{greeks.theta:+.4f}", 6)
+            _kv("Rho", f"{greeks.rho:+.4f}", 6)
+
+            # Probabilities
+            p_itm = analysis.prob_itm(spot, strike, T, r, iv_val, opt_type)
+            p_profit = analysis.prob_profit(spot, strike, T, r, iv_val,
+                                            opt_type, target.mid)
+            exp_ret = analysis.expected_return(spot, strike, T, r, iv_val,
+                                              opt_type, target.mid)
+            be = analysis.breakeven(strike, target.mid, opt_type)
+
+            print()
+            _info("  Probability")
+            _kv("ITM", f"{p_itm*100:.1f}%", 6)
+            _kv("Profit", f"{p_profit*100:.1f}%", 6)
+            ret_color = "\033[92m" if exp_ret >= 0 else "\033[91m"
+            _kv("Exp Return", f"{ret_color}{exp_ret*100:+.1f}%\033[0m", 6)
+            _kv("Breakeven", f"${be:.2f}", 6)
+
+    # ── GARCH vol ──────────────────────────────────────────────
+    garch_vol = None
+    try:
+        with _catch_warnings():
+            returns = provider.get_daily_returns(symbol, period="2y")
+        from qkit.volatility.garch import fit as garch_fit
+        pct_returns = returns * 100
+        garch_result = garch_fit(pct_returns, model_type="garch")
+        garch_vol = garch_result.forecast_vol(days) / 100
+        print()
+        _info("  GARCH Forecast")
+        _kv(f"{days}d Vol", f"{garch_vol*100:.1f}%", 6)
+        if target is not None and not np.isnan(iv_val) and iv_val > 0:
+            diff = (iv_val - garch_vol) * 100
+            label = "IV rich" if diff > 0 else "IV cheap"
+            color = "\033[91m" if diff > 0 else "\033[92m"
+            _kv("IV vs GARCH", f"{color}{diff:+.1f}pp  ({label})\033[0m", 6)
+    except Exception:
+        pass
+
+    # ── Mispricing table ──────────────────────────────────────
+    verbose = args.verbose
+    moneyness = (0.0, 99.0) if verbose else (0.80, 1.20)
+    type_quotes = [q for q in exp_quotes if q.option_type == opt_type]
+    if type_quotes:
+        mdf = analysis.mispricing_table(type_quotes, spot, r, T,
+                                         garch_vol=garch_vol,
+                                         moneyness=moneyness)
+        if not mdf.empty and "mispricing_pct" in mdf.columns:
+            # Sort by absolute mispricing
+            mdf["abs_mis"] = mdf["mispricing_pct"].abs()
+            mdf = mdf.sort_values("abs_mis", ascending=False)
+
+            top_n = args.top or 5
+            top = mdf.head(top_n)
+
+            print()
+            _info(f"  Mispricing Top {min(top_n, len(top))}  ({opt_type}s)")
+
+            for _, row in top.iterrows():
+                mis = row["mispricing_pct"]
+                if mis > 2:
+                    tag = "\033[91mRICH\033[0m"
+                elif mis < -2:
+                    tag = "\033[92mCHEAP\033[0m"
+                else:
+                    tag = "\033[90mFAIR\033[0m"
+
+                iv_str = f"IV={row['iv']*100:.0f}%" if "iv" in row and not np.isnan(row.get("iv", np.nan)) else ""
+                _kv(
+                    f"K=${row['strike']:.0f}",
+                    f"mid=${row['mid']:.2f}  {mis:+.1f}%  {tag}  {iv_str}",
+                    6,
+                )
+
+    # ── ATM Term Structure ────────────────────────────────────
+    max_exp = 0 if verbose else 10
+    ts = analysis.atm_term_structure(chain, spot, r, max_expiries=max_exp)
+    if not ts.empty and len(ts) >= 2:
+        print()
+        _info("  ATM Term Structure")
+        for _, row in ts.iterrows():
+            _kv(f"{row['days']:>3d}d", f"{row['atm_iv']*100:.1f}%", 6)
+
+    # ── What-if P&L (-w) ─────────────────────────────────────
+    if args.whatif and target is not None and not np.isnan(iv_val) and iv_val > 0:
+        wif = analysis.whatif_table(spot, strike, T, r, iv_val,
+                                    opt_type, target.mid)
+        print()
+        _info("  What-If P&L  (spot chg x vol chg)")
+        # Header
+        cols = wif.columns.tolist()
+        hdr = "          " + "  ".join(f"{c:>8}" for c in cols)
+        print(f"    {hdr}")
+        print(f"    {'─' * (10 + 10 * len(cols))}")
+        for idx, row_data in wif.iterrows():
+            vals = []
+            for v in row_data:
+                if v >= 0:
+                    vals.append(f"\033[92m{v:+8.2f}\033[0m")
+                else:
+                    vals.append(f"\033[91m{v:+8.2f}\033[0m")
+            print(f"    {idx:>8}  " + "  ".join(vals))
+
+    print()
+
+
 def cmd_market(args):
     """Market overview for a symbol."""
     from qkit.data import get_provider
@@ -702,6 +907,9 @@ EPILOG = """\
 examples:
   qkit market AAPL
   qkit market AAPL -v
+  qkit opt QQQ 260330P
+  qkit opt SPY 260430C --strike 580 --top 10
+  qkit opt QQQ 260404P --whatif
   qkit demo --spot 150 --strike 155 --days 45
   qkit greeks AAPL
   qkit greeks AAPL --strike 180 --days 14
@@ -785,6 +993,25 @@ def _build_parser() -> argparse.ArgumentParser:
     regime.add_argument("-p", "--period", default="3y", help="history period (default: 3y)")
     regime.add_argument("--states", type=int, default=2, help="number of hidden states (default: 2)")
 
+    # opt
+    opt = sub.add_parser("opt", help="Options contract analysis",
+                         description="Analyse an option contract: Greeks, mispricing, IV, probabilities.\n"
+                                     "Contract format: SYMBOL YYMMDD[C|P] (e.g. QQQ 260330P).\n"
+                                     "Strike auto-resolves to ATM unless --strike is given.",
+                         formatter_class=_f)
+    opt.add_argument("symbol", help="ticker symbol (e.g. QQQ)")
+    opt.add_argument("code", help="YYMMDD[C|P] contract code (e.g. 260330P)")
+    opt.add_argument("-k", "--strike", type=float, default=None,
+                     help="explicit strike price (default: ATM)")
+    opt.add_argument("-r", "--rate", type=float, default=None,
+                     help="risk-free rate (default: 0.043)")
+    opt.add_argument("--top", type=int, default=5,
+                     help="number of mispriced contracts to show (default: 5)")
+    opt.add_argument("-v", "--verbose", action="store_true",
+                     help="include deep OTM mispricing and all term structure expiries")
+    opt.add_argument("-w", "--whatif", action="store_true",
+                     help="show P&L what-if matrix (spot x vol changes)")
+
     # market
     market = sub.add_parser("market", help="Market overview for a symbol",
                             description="Show price, fundamentals, and optionally Greeks/chain/GARCH.\nUse -v for the full picture.",
@@ -833,6 +1060,7 @@ qkit - quantitative finance toolkit
 
 commands:
   market     Market overview (price, fundamentals, -v for full)
+  opt        Options contract analysis (Greeks, mispricing, IV, P&L)
   risk       VaR / CVaR (4 methods)
   pair       Pairs trading analysis (-v for Kalman/Johansen/regime)
   demo       BSM pricing demo
@@ -870,6 +1098,7 @@ def main():
         "test": cmd_test,
         "serve": cmd_serve,
         "regime": cmd_regime,
+        "opt": cmd_opt,
         "market": cmd_market,
         "risk": cmd_risk,
         "pair": cmd_pair,
